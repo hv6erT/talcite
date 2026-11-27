@@ -16,11 +16,11 @@
 #include "tal/text.hpp"
 #include "tal/texts.hpp"
 #include "tal/trouble.hpp"
+#include "tal/wording.hpp"
 
 #include "generating.hpp"
 #include "spoken.hpp"
 #include "texts_of.hpp"
-#include "wording.hpp"
 
 #include "tal/testing.hpp"
 
@@ -353,6 +353,31 @@ TRIAL("texts: auto is the system's language among the files, or English") {
 
     desk.read(texts, "auto");
     SAME(texts.code(), found.empty() ? std::string{"en-US"} : found);
+}
+
+// A disk given to the dictionary is read instead of the default one, which keeps its own files; with
+// none given, the default one is read again.
+TRIAL("texts: a port given is read instead of the default one") {
+    Desk desk;
+    Texts texts = made();
+    const auto own = std::make_shared<tal::fs::Memory>();
+
+    tal::wait(desk.loop, own->make(Path{"/program"}));
+    tal::wait(desk.loop, own->write(Path{"/program/pl-PL.json"}, tal::bytes(polish)));
+    desk.put("/program/pl-PL.json", R"({"title":"Domyślne próby"})");
+
+    tal::wait(desk.loop, texts.read({Path{"/program"}}, "pl-PL", own));
+    SAME(texts.code(), std::string{"pl-PL"});
+    SAME(texts.said(title), std::string{"Próby"});
+
+    const std::vector<tal::Spoken> spoken = tal::wait(desk.loop, texts.languages({Path{"/program"}}, own));
+
+    SAME(spoken.size(), std::size_t{2});
+    SAME(spoken.back().name, std::string{"Polski"});
+    SAME(tal::wait(desk.loop, texts.languages({Path{"/program"}})).back().name, std::string{});
+
+    tal::wait(desk.loop, texts.read({Path{"/program"}}, "pl-PL"));
+    SAME(texts.said(title), std::string{"Domyślne próby"});
 }
 
 TRIAL("texts: the languages are English first, then the files by code, each with its own name") {

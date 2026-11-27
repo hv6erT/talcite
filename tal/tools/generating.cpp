@@ -9,8 +9,7 @@
 #include "tal/json.hpp"
 #include "tal/text.hpp"
 #include "tal/trouble.hpp"
-
-#include "wording.hpp"
+#include "tal/wording.hpp"
 
 // The generator of a program's texts: out of the English file it makes a header and a source of
 // C++ functions, one for each text, named by the text's road (`menu.left.text` is
@@ -281,7 +280,8 @@ struct Kept {
 
 // The settings under the object `node` at `road`, in the order of the text, with the problems of
 // their values. At the top every value is a section: an object of settings, or a list of records
-// (objects of texts), which is one setting; deeper a value is a boolean, a whole number within
+// (objects of texts), which is one setting; or "version", the version of the file (a whole number
+// from 1), which is no setting; deeper a value is a boolean, a whole number within
 // `int`, a text, a list of texts or an object of more settings.
 void kept(const Source& source, const json::Value& node, std::vector<std::string>& road, std::vector<Kept>& made, std::vector<std::string>& problems) {
     for (std::size_t at = 0; at < node.size(); ++at) {
@@ -293,7 +293,9 @@ void kept(const Source& source, const json::Value& node, std::vector<std::string
         const auto problem = [&](std::string why) { problems.push_back(located(source.name, value.line(), value.column(), quoted + why)); };
         const bool top = road.size() == 1;
 
-        if (value.kind() == json::Kind::object) {
+        if (top && road.back() == "version") {
+            if (value.kind() != json::Kind::integer || value.integer() < 1 || value.integer() > std::numeric_limits<int>::max()) problem(" is the version of the file, a whole number from 1");
+        } else if (value.kind() == json::Kind::object) {
             if (value.size() == 0) problem(" holds no settings");
             else kept(source, value, road, made, problems);
         } else if (top && value.kind() == json::Kind::array) {

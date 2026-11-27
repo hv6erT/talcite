@@ -203,8 +203,10 @@ target_link_libraries(tal-plotting PUBLIC tal-media)
 # PDFium, the build of bblanchon/pdfium-binaries without V8 (so no JavaScript or XFA in PDF), and
 # checks it by its SHA-256. The pinned build has the sums of Linux and Windows on x64; for any other
 # system, or a build without the network, the programmer gives the archive (TAL_PDFIUM_ARCHIVE) and,
-# for another one than pinned, its sum (TAL_PDFIUM_SHA256). The program and the library land
-# beside the programs of the build, the licenses of PDFium and what it holds in licenses/pdfium.
+# for another one than pinned, its sum (TAL_PDFIUM_SHA256). The program lands beside the programs
+# of the build and carries the licenses of PDFium and of what it holds (`--licenses` writes them).
+# On Windows it carries the library too, as a resource, with its SHA-256, and unpacks it into the
+# user's local data when it starts; elsewhere the library lands beside it.
 option(TAL_PDFIUM "Render PDF through PDFium in a process of its own (fetches PDFium)" OFF)
 set(TAL_PDFIUM_ARCHIVE "" CACHE FILEPATH "PDFium's archive, fetched already (pdfium-<system>.tgz)")
 set(TAL_PDFIUM_SHA256 "" CACHE STRING "The SHA-256 of PDFium's archive for another system than pinned")
@@ -274,31 +276,50 @@ if(TAL_PDFIUM)
 
   string(SUBSTRING "${pdfium_version}" 1 -1 pdfium_version)
 
-  add_library(tal-pdfium SHARED IMPORTED)
-  set_target_properties(tal-pdfium PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${pdfium_home}/include")
+  # The licenses as one text: PDFium's own first, then those of what it holds, each under its name.
+  set(pdfium_licenses "${CMAKE_CURRENT_BINARY_DIR}/pdfium-licenses/licenses.txt")
+  file(GLOB pdfium_held "${pdfium_home}/licenses/*")
+  list(SORT pdfium_held)
+  file(READ "${pdfium_home}/LICENSE" pdfium_text)
+  set(pdfium_joined "== PDFium ==\n\n${pdfium_text}")
 
-  if(WIN32)
-    set(pdfium_library "${pdfium_home}/bin/pdfium.dll")
+  foreach(one IN LISTS pdfium_held)
+    get_filename_component(name "${one}" NAME)
+    file(READ "${one}" pdfium_text)
+    string(APPEND pdfium_joined "\n== ${name} ==\n\n${pdfium_text}")
+  endforeach()
 
-    if(MSVC)
-      set_target_properties(tal-pdfium PROPERTIES IMPORTED_LOCATION "${pdfium_library}" IMPORTED_IMPLIB "${pdfium_home}/lib/pdfium.dll.lib")
-    else()
-      set_target_properties(tal-pdfium PROPERTIES IMPORTED_LOCATION "${pdfium_library}" IMPORTED_IMPLIB "${pdfium_library}")
-    endif()
-  else()
-    set(pdfium_library "${pdfium_home}/lib/libpdfium${CMAKE_SHARED_LIBRARY_SUFFIX}")
-    set_target_properties(tal-pdfium PROPERTIES IMPORTED_LOCATION "${pdfium_library}" IMPORTED_NO_SONAME TRUE)
-  endif()
+  file(WRITE "${pdfium_licenses}.new" "${pdfium_joined}")
+  file(COPY_FILE "${pdfium_licenses}.new" "${pdfium_licenses}" ONLY_IF_DIFFERENT)
 
   add_executable(tal-render-pdfium engines/pdfium.cpp)
-  target_link_libraries(tal-render-pdfium PRIVATE tal-media tal-pdfium)
-  target_include_directories(tal-render-pdfium PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  target_link_libraries(tal-render-pdfium PRIVATE tal-media)
+  target_include_directories(tal-render-pdfium PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${pdfium_home}/include")
   target_compile_definitions(tal-render-pdfium PRIVATE TAL_PDFIUM_VERSION="${pdfium_version}")
-  set_target_properties(tal-render-pdfium PROPERTIES BUILD_RPATH "\$ORIGIN" INSTALL_RPATH "\$ORIGIN")
-  add_custom_command(TARGET tal-render-pdfium POST_BUILD
-                     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${pdfium_library}" "$<TARGET_FILE_DIR:tal-render-pdfium>"
-                     COMMAND ${CMAKE_COMMAND} -E copy_directory "${pdfium_home}/licenses" "$<TARGET_FILE_DIR:tal-render-pdfium>/licenses/pdfium"
-                     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${pdfium_home}/LICENSE" "$<TARGET_FILE_DIR:tal-render-pdfium>/licenses/pdfium/LICENSE")
+  tal_embedded(tal-render-pdfium licenses_of "${pdfium_licenses}")
+
+  if(WIN32)
+    # The library rides in the program as the resource PDFIUM, checked by its SHA-256 when unpacked.
+    set(pdfium_library "${pdfium_home}/bin/pdfium.dll")
+    file(SHA256 "${pdfium_library}" pdfium_library_sum)
+    set(pdfium_resource "${CMAKE_CURRENT_BINARY_DIR}/pdfium-resource/pdfium.rc")
+    file(WRITE "${pdfium_resource}.new" "PDFIUM RCDATA \"${pdfium_library}\"\n")
+    file(COPY_FILE "${pdfium_resource}.new" "${pdfium_resource}" ONLY_IF_DIFFERENT)
+    enable_language(RC)
+    target_sources(tal-render-pdfium PRIVATE "${pdfium_resource}")
+    set_source_files_properties("${pdfium_resource}" PROPERTIES OBJECT_DEPENDS "${pdfium_library}")
+    target_compile_definitions(tal-render-pdfium PRIVATE TAL_PDFIUM_LIBRARY_SHA256="${pdfium_library_sum}")
+    target_link_libraries(tal-render-pdfium PRIVATE shell32 ole32)
+  else()
+    add_library(tal-pdfium SHARED IMPORTED)
+    set(pdfium_library "${pdfium_home}/lib/libpdfium${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    set_target_properties(tal-pdfium PROPERTIES IMPORTED_LOCATION "${pdfium_library}" IMPORTED_NO_SONAME TRUE)
+    target_link_libraries(tal-render-pdfium PRIVATE tal-pdfium)
+    set_target_properties(tal-render-pdfium PROPERTIES BUILD_RPATH "\$ORIGIN" INSTALL_RPATH "\$ORIGIN")
+    add_custom_command(TARGET tal-render-pdfium POST_BUILD
+                       COMMAND ${CMAKE_COMMAND} -E copy_if_different "${pdfium_library}" "$<TARGET_FILE_DIR:tal-render-pdfium>")
+  endif()
+
   target_compile_definitions(tal-media PRIVATE TAL_PDFIUM)
 endif()
 
@@ -370,15 +391,16 @@ endif()
 # tree of nodes with its document, which delivers events, keeps the focus and the timers, and
 # styles, lays out and paints what changed. Pictures come from tal-media: drawn in characters, or
 # sent to the terminal as sixel or kitty pixels.
-add_library(tal-ui STATIC src/action.cpp src/app.cpp src/capabilities.cpp src/clipboard.cpp src/conhost.cpp src/locating.cpp src/telling.cpp src/console.cpp src/damage.cpp src/decoder.cpp src/diff.cpp src/document.cpp src/emulator.cpp src/terminal.cpp src/editing.cpp src/event.cpp src/fields.cpp
+add_library(tal-ui STATIC src/action.cpp src/app.cpp src/capabilities.cpp src/clipboard.cpp src/desktop.cpp src/desktops.cpp src/conhost.cpp src/locating.cpp src/telling.cpp src/console.cpp src/damage.cpp src/decoder.cpp src/diff.cpp src/document.cpp src/emulator.cpp src/terminal.cpp src/editing.cpp src/event.cpp src/fields.cpp
   src/controls.cpp src/geometry.cpp src/key.cpp src/layout.cpp src/menu.cpp src/model.cpp src/pages.cpp src/editor.cpp src/lining.cpp src/dropping.cpp src/spooling.cpp src/image.cpp src/drawn.cpp src/leaves.cpp src/previewed.cpp src/webview.cpp src/written.cpp src/mosaic.cpp src/node.cpp src/sixel.cpp src/style.cpp src/surface.cpp src/undo.cpp src/views.cpp src/vt.cpp src/window.cpp
   src/platform/console_core.cpp)
 target_link_libraries(tal-ui PUBLIC tal-media)
 
-# Windows: the double-click time (user32) and NormalizeString (normaliz), which composes a letter
-# with its marks for the console without VT, whose cell holds one UTF-16 unit.
+# Windows: the double-click time (user32), NormalizeString (normaliz), which composes a letter
+# with its marks for the console without VT, whose cell holds one UTF-16 unit, and the programs of
+# a type of file (shlwapi).
 if(WIN32)
-  target_link_libraries(tal-ui PUBLIC user32 normaliz)
+  target_link_libraries(tal-ui PUBLIC user32 normaliz shlwapi)
 endif()
 
 # The program that shows a simulation (E7e), among the demos: a double pendulum drawn in the

@@ -623,6 +623,50 @@ TRIAL("Menu: standing by itself, it draws no frame it has not, and opens no subm
     (void)back;
 }
 
+// An action that is on or off makes room for a mark before the text of every position of its
+// menu, and one that is on shows the dot of a choice (`choice.dot`) there; ordinary again, the
+// room goes.
+TRIAL("Menu: actions on and off show a dot before the text, the others making room for it") {
+    Program program;
+
+    program.one->checked(true);
+    program.two->checked(false);
+    program.opened(0);
+    program.scene.press(Key{U'r'});
+    program.scene.wait(0ms);
+
+    OUGHT(begins(program.scene.row(5), "│ Recent  ▸ ││ • One │"));
+    OUGHT(begins(program.scene.row(6), "│ Quit  F10 ││   Two │"));
+
+    program.one->checked(false);
+    program.two->checked(true);
+    program.scene.wait(0ms);
+
+    OUGHT(begins(program.scene.row(5), "│ Recent  ▸ ││   One │"));
+    OUGHT(begins(program.scene.row(6), "│ Quit  F10 ││ • Two │"));
+
+    int told = 0;
+    const tal::Hook heard = program.two->on<tal::Altered>([&told](tal::Altered&) { ++told; });
+
+    program.two->checked(false);
+    program.two->checked(false);
+    program.scene.wait(0ms);
+
+    SAME(told, 1);
+    OUGHT(begins(program.scene.row(6), "│ Quit  F10 ││   Two │"));
+
+    program.one->checked(std::nullopt);
+    program.two->checked(std::nullopt);
+    program.scene.wait(0ms);
+
+    OUGHT(begins(program.scene.row(5), "│ Recent  ▸ ││ One │"));
+    OUGHT(!program.one->checked().has_value());
+
+    program.scene.press(Key{U't'});
+
+    SAME(program.ran, (std::vector<std::string>{"Two"}));
+}
+
 // A menu taller than the room shows the positions that fit; the others get no row and no focus.
 TRIAL("Menu: positions past the room get no row") {
     Program program{Size{16, 5}};
@@ -1157,9 +1201,10 @@ TRIAL("Tabs: pages put in, taken away and moved, the shown one staying shown") {
 
 // Framed with a border, the names stand in its top edge after the heading, a cell of the edge
 // between them, and the page right under the edge; a click shows a page, a middle click tells
-// `Closing` and closes the page unless a hook takes it. Crowded, the shown name stands between
-// arrows after the heading, and a click on an arrow steps. Framed without a border, the names take
-// the first row, the page the rows under it.
+// `Closing` and closes the page unless a hook takes it; a spot of the screen tells whose name
+// stands there. Crowded, the shown name stands between arrows after the heading (the others
+// nowhere), and a click on an arrow steps. Framed without a border, the names take the first row,
+// the page the rows under it.
 TRIAL("Tabs: framed, the names in the top edge after the heading") {
     Scene scene{{.screen = {30, 5}}};
     Document document{scene.time()};
@@ -1235,6 +1280,13 @@ TRIAL("Tabs: framed, the names in the top edge after the heading") {
     short_by_one.show(tight);
 
     SAME(fits.row(0), std::string{"┌1─ Filmy ─ Pobrane ┐"});
+    OUGHT(full.named_at(Spot{3, 0}) == std::optional<std::size_t>{0});
+    OUGHT(full.named_at(Spot{9, 0}) == std::optional<std::size_t>{0});
+    OUGHT(!full.named_at(Spot{10, 0}).has_value());
+    OUGHT(full.named_at(Spot{19, 0}) == std::optional<std::size_t>{1});
+    OUGHT(!full.named_at(Spot{19, 1}).has_value());
+    OUGHT(!cut.named_at(Spot{14, 0}).has_value());
+    OUGHT(cut.named_at(Spot{5, 0}) == std::optional<std::size_t>{0});
     OUGHT(begins(short_by_one.row(0), "┌1─◀"));
 
     narrow.click({14, 0});

@@ -59,6 +59,8 @@ struct Rendering {
 
 [[nodiscard]] std::string folded(std::string_view utf8);
 
+[[nodiscard]] std::string unmarked(std::string_view utf8);
+
 [[nodiscard]] char32_t lowered(char32_t one);
 
 [[nodiscard]] std::string lowered(std::string_view utf8);

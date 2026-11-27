@@ -163,6 +163,8 @@ public:
 
     [[nodiscard]] bool focused() const;
 
+    [[nodiscard]] std::optional<Spot> local(Spot screen) const;
+
 protected:
     template <typename E>
     [[nodiscard]] Hook otherwise(Fn<E> what) {
@@ -178,6 +180,8 @@ protected:
     void hoverable(bool on);
 
     void capture();
+
+    void dragged(std::shared_ptr<Carried> carried);
 
     void state(State one, bool on);
 

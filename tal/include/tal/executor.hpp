@@ -22,6 +22,8 @@ namespace detail {
 
 struct Alarm;
 
+class Chain;
+
 [[nodiscard]] std::shared_ptr<Alarm> alarmed(Executor& where, std::chrono::milliseconds wait, Work what);
 
 void unalarmed(Alarm& which);
@@ -71,12 +73,19 @@ protected:
 
 private:
     friend struct detail::Alarm;
+    friend class detail::Chain;
     friend std::shared_ptr<detail::Alarm> detail::alarmed(Executor& where, std::chrono::milliseconds wait, Work what);
     friend void detail::unalarmed(detail::Alarm& which);
 
     struct Life;
 
     [[nodiscard]] Work withdrawn(std::uint64_t which);
+
+    void left();
+
+    void returned();
+
+    void drained();
 
     Port<Clock> time_;
     std::shared_ptr<Life> life_;
@@ -86,6 +95,7 @@ private:
     std::multimap<std::chrono::steady_clock::time_point, std::uint64_t> due_;
     std::map<std::uint64_t, Work> timers_;
     std::uint64_t numbered_ = 0;
+    std::size_t away_ = 0;
     bool stopping_ = false;
     int code_ = 0;
 };

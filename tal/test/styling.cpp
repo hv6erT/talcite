@@ -219,6 +219,16 @@ TRIAL("Sheet: a style casts a shadow when its rule says so") {
     OUGHT(refusal(R"({"rules": [{"select": "pane", "style": {"shadow": 1}}]})").ends_with("\"shadow\" is true or false"));
 }
 
+// A veil is said with a boolean, and a later rule may take it away.
+TRIAL("Sheet: a style is a veil when its rule says so") {
+    const StyleSheet sheet = sheeted({{"zone", R"({"veil": true})"}, {"zone.solid", R"({"veil": false})"}});
+
+    OUGHT(styled(sheet, {{"zone"}}).veil);
+    OUGHT(!styled(sheet, {{"zone", "solid"}}).veil);
+    OUGHT(!styled(sheet, {{"pane"}}).veil);
+    OUGHT(refusal(R"({"rules": [{"select": "zone", "style": {"veil": "yes"}}]})").ends_with("\"veil\" is true or false"));
+}
+
 TRIAL("Sheet: numbers in every form JSON allows, read exactly where they are whole") {
     const auto padded = [](std::string_view said) {
         return styled(sheeted({{"pane", "{\"padding\": " + std::string{said} + "}"}}), {{"pane"}}).padding.top;

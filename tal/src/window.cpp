@@ -23,11 +23,13 @@ namespace tal {
 using tree::taking;
 using tree::under;
 
-// A window titled `named`, in the class "window", and a modal one in the class "dialog" too: the
-// sheet gives them their frames and shadows. Its bound actions run on their shortcuts and letters,
-// and a modal window closes on Esc; these are default actions, so a node inside takes a key first.
+// A window titled `named`, in the class "window", and a modal or loose one in the class "dialog"
+// too: the sheet gives them their frames and shadows. Its bound actions run on their shortcuts and
+// letters, and a modal or loose window closes on Esc; these are default actions, so a node inside
+// takes a key first. A loose window holds the keys as a modal one does, but a press of the mouse
+// outside it closes it and goes on to what lies beneath (`Document`).
 Window::Window(std::string named, Modal modal) : title(*this, Effect::layout, std::move(named)), modal_(modal) {
-    classes(modal == Modal::yes ? std::vector<std::string>{"window", "dialog"} : std::vector<std::string>{"window"});
+    classes(modal != Modal::no ? std::vector<std::string>{"window", "dialog"} : std::vector<std::string>{"window"});
 
     hooks_.add(otherwise<KeyEvent>([this](KeyEvent& what) {
         const Key key = what.key;
@@ -51,7 +53,7 @@ Window::Window(std::string named, Modal modal) : title(*this, Effect::layout, st
                     return;
                 }
 
-        if (modal_ == Modal::yes && key.code() == Code::escape && mods == Mods{}) {
+        if (modal_ != Modal::no && key.code() == Code::escape && mods == Mods{}) {
             what.take();
             close();
         }
@@ -160,7 +162,7 @@ Window& Layers::open(std::shared_ptr<Window> one) {
     if (document() != nullptr)
         if (Node* focus = document()->focused()) made.returning = focus->weak_from_this();
 
-    const std::size_t at = one->modal() == Modal::yes ? children().size() : modals();
+    const std::size_t at = one->modal() != Modal::no ? children().size() : modals();
     auto& window = static_cast<Window&>(children().insert(at, std::move(one)));
 
     made.window = std::static_pointer_cast<Window>(window.shared_from_this());
@@ -176,7 +178,7 @@ Window& Layers::open(std::shared_ptr<Window> one) {
 
     opened_.push_back(std::move(made));
 
-    if (window.modal() == Modal::yes && document() != nullptr) document()->confine(&window);
+    if (window.modal() != Modal::no && document() != nullptr) document()->confine(&window);
 
     return window;
 }
@@ -209,7 +211,7 @@ Spot Layers::local(Spot screen) const {
 // the focus goes into it then, as on opening. A window that is not one of these layers' modeless
 // windows throws std::logic_error.
 void Layers::raise(Window& one) {
-    if (one.parent() != this || one.modal() == Modal::yes) throw std::logic_error{"tal::Layers::raise: not a modeless window of these layers"};
+    if (one.parent() != this || one.modal() != Modal::no) throw std::logic_error{"tal::Layers::raise: not a modeless window of these layers"};
 
     if (uppermost(Modal::no, nullptr) == &one) return;
 
@@ -349,24 +351,25 @@ Layers::Opened* Layers::record(const Window& one) {
     return nullptr;
 }
 
-// The topmost window that is modal (or modeless, as `modal` says), other than `besides`, or none.
+// The topmost window that confines (modal or loose) or does not (modeless), as `modal` says, other
+// than `besides`, or none.
 Window* Layers::uppermost(Modal modal, const Window* besides) const {
     Window* made = nullptr;
 
     for (Node& one : children())
-        if (auto* window = dynamic_cast<Window*>(&one); window != nullptr && window != besides && window->modal() == modal) made = window;
+        if (auto* window = dynamic_cast<Window*>(&one); window != nullptr && window != besides && (window->modal() == Modal::no) == (modal == Modal::no)) made = window;
 
     return made;
 }
 
-// Where the modal windows begin among the children: after every modeless one.
+// Where the modal and loose windows begin among the children: after every modeless one.
 std::size_t Layers::modals() const {
     std::size_t made = 0;
 
     for (Node& one : children()) {
         auto* window = dynamic_cast<Window*>(&one);
 
-        if (window != nullptr && window->modal() == Modal::yes) break;
+        if (window != nullptr && window->modal() != Modal::no) break;
 
         ++made;
     }
@@ -537,10 +540,11 @@ private:
 // among `actions` that answer what the field holds, their letters in order (spaces aside), case
 // aside, best first: more letters at the start of a word, more letters together, then in the order
 // given. The arrows and the page keys move in the table while the field keeps the focus; Enter, or
-// a double click, closes the palette and runs the current action. An action that changes or turns
-// on or off sifts them again. Esc closes the palette without running anything.
+// a double click, closes the palette, empties the field and runs the current action. An action that
+// changes or turns on or off sifts them again. Esc, or a press outside (the palette is loose),
+// closes it without running anything, and the field keeps what was typed for when it opens again.
 Palette::Palette(std::vector<std::shared_ptr<Action>> actions, std::string named)
-    : Window(std::move(named), Modal::yes), actions_(std::move(actions)), rows_(std::make_shared<Rows>()) {
+    : Window(std::move(named), Modal::loose), actions_(std::move(actions)), rows_(std::make_shared<Rows>()) {
     add_class("palette");
 
     std::erase(actions_, nullptr);
@@ -603,7 +607,8 @@ Palette::Palette(std::vector<std::shared_ptr<Action>> actions, std::string named
     field_->focus();
 }
 
-// As wide as the longest text with the widest shortcut beside it (30 columns at least), and as high
+// As wide as the longest text with the widest shortcut beside it, and at least 40 columns or three
+// fifths of the room, whichever is more; as high
 // as the field over up to 12 rows of actions, all the actions given counted, so that the window
 // keeps its size while they are sifted; no larger than the room.
 Size Palette::measure(Limits room) const {
@@ -616,7 +621,7 @@ Size Palette::measure(Limits room) const {
         if (one->key()) keys = std::max(keys, text::width(to_string(*one->key())));
     }
 
-    const int wide = std::max(texts + 2 + keys, 30);
+    const int wide = std::max({texts + 2 + keys, 40, room.most.wide * 3 / 5});
     const int high = 1 + static_cast<int>(std::min<std::size_t>(std::max<std::size_t>(actions_.size(), 1), 12));
 
     return Size{std::clamp(wide, room.least.wide, std::max(room.most.wide, room.least.wide)), std::clamp(high, room.least.high, std::max(room.most.high, room.least.high))};
@@ -645,13 +650,14 @@ void Palette::sifted() {
     table_->top(0);
 }
 
-// Closes the palette and runs the action of the row `row`. The palette may go with its closing, so
-// the action is held apart first.
+// Empties the field, closes the palette and runs the action of the row `row`. The palette may go
+// with its closing, so the action is held apart first and the field emptied before.
 void Palette::chosen(std::size_t row) {
     if (row >= rows_->rows()) return;
 
     const std::shared_ptr<Action> one = rows_->action(row);
 
+    field_->text = std::string{};
     close();
     one->run();
 }

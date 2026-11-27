@@ -120,6 +120,8 @@ public:
 
     void ring();
 
+    [[nodiscard]] std::shared_ptr<Carried> carried() const;
+
 private:
     friend class App;
     friend class Node;
@@ -167,6 +169,12 @@ private:
 
     void released();
 
+    void began(std::shared_ptr<Carried> carried);
+
+    void over(Spot screen);
+
+    void ended(bool dropping);
+
     void homed(Executor* home);
 
     void inspected();
@@ -205,6 +213,14 @@ private:
     bool releasing_ = false;
     std::deque<Work> held_;
     std::shared_ptr<int> ticket_;
+
+    struct Carrying {
+        std::shared_ptr<Carried> carried;
+        std::weak_ptr<Node> taker;
+    };
+
+    std::optional<Carrying> carrying_;
+    Spot pointer_;
 };
 
 }

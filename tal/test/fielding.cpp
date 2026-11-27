@@ -84,6 +84,7 @@ struct Typed {
 
 // Letters go in at the cursor; the arrows, Home and End move it a character at a time, also over a
 // character of several bytes; Backspace and Delete take one away. The caret stands at the cursor.
+// The field shows its look to its end, past the text.
 TRIAL("Field: typing, moving and erasing characters") {
     Typed typed{"a\xc5\xbc"};
     Field& field = *typed.field;
@@ -108,6 +109,7 @@ TRIAL("Field: typing, moving and erasing characters") {
     SAME(*field.text, std::string{"ab"});
     SAME(*field.cursor, std::size_t{0});
     OUGHT(typed.scene.at({0, 0}).look.under);
+    OUGHT(typed.scene.at({9, 0}).look.under);
 
     field.cursor = 99;
     typed.scene.wait(0ms);

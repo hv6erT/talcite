@@ -9,10 +9,10 @@
 #include "tal/executor.hpp"
 #include "tal/fs.hpp"
 #include "tal/json.hpp"
+#include "tal/port.hpp"
 #include "tal/text.hpp"
 #include "tal/trouble.hpp"
-
-#include "wording.hpp"
+#include "tal/wording.hpp"
 
 // The dictionary of a program: English underneath, compiled in by the generator of texts, and the
 // chosen language over it, read from a file. A translation from outside the program is hostile
@@ -51,17 +51,20 @@ std::size_t form_of(std::string_view name) {
     return static_cast<std::size_t>(std::find(std::begin(plural_names), std::end(plural_names), name) - std::begin(plural_names));
 }
 
-// The codes of the languages whose files lie in `folders`, each once, sorted, with English among
-// them even without a file. A folder that cannot be listed adds nothing, and a file whose name is
-// not a code is no language.
-Task<std::vector<std::string>> listed(std::vector<Path> folders) {
+// The files through `files`, or through the default port when it is none.
+Port<fs::Files> port_of(std::shared_ptr<fs::Files> files) { return files != nullptr ? Port<fs::Files>{std::move(files)} : Port<fs::Files>{}; }
+
+// The codes of the languages whose files lie in `folders` of `files`, each once, sorted, with
+// English among them even without a file. A folder that cannot be listed adds nothing, and a file
+// whose name is not a code is no language.
+Task<std::vector<std::string>> listed(Port<fs::Files> files, std::vector<Path> folders) {
     std::vector<std::string> made{std::string{base}};
 
     for (const Path& folder : folders) {
         std::vector<fs::Entry> found;
 
         try {
-            found = co_await fs::list(folder);
+            found = co_await files->list(folder);
         } catch (const Trouble&) {
             continue;
         }
@@ -83,15 +86,15 @@ Task<std::vector<std::string>> listed(std::vector<Path> folders) {
     co_return made;
 }
 
-// The text of the file of the language `code` in the first of `folders` that has one, at most one
-// byte longer than JSON may be, or none when no folder has it or the first one found cannot be
-// read.
-Task<std::optional<std::string>> fetched(std::vector<Path> folders, std::string code) {
+// The text of the file of the language `code` in the first of `folders` of `files` that has one, at
+// most one byte longer than JSON may be, or none when no folder has it or the first one found
+// cannot be read.
+Task<std::optional<std::string>> fetched(Port<fs::Files> files, std::vector<Path> folders, std::string code) {
     const std::uint64_t most = json::Limits{}.bytes + 1;
 
     for (const Path& folder : folders) {
         try {
-            co_return text::of(co_await fs::read(folder / (code + std::string{ending}), fs::Range{0, most}));
+            co_return text::of(co_await files->read(folder / (code + std::string{ending}), fs::Range{0, most}));
         } catch (const Trouble& why) {
             if (why.kind() != Kind::missing) co_return std::nullopt;
         }
@@ -140,19 +143,22 @@ Texts::Texts(std::span<const std::string_view> keys, std::string_view english) :
 }
 
 // Reads the language `code` over English: from the first of `folders` that has its file, so that
-// the user's folder, given first, beats the program's. "auto" is the system's language, matched
+// the user's folder, given first, beats the program's; through `files`, or the default port when it
+// is none. "auto" is the system's language, matched
 // against the files (`nearest`), or English. A code that cannot name a file, a file that is
 // missing, cannot be read or is not JSON leaves English alone, and `code` says en-US; a file of
 // English itself goes over the English compiled in. The pool reads and compares, and the dictionary
 // changes at once at the end, where the caller is, so that no text is half old.
-Task<void> Texts::read(std::vector<Path> folders, std::string code) {
+Task<void> Texts::read(std::vector<Path> folders, std::string code, std::shared_ptr<fs::Files> files) {
     Executor& back = co_await detail::Here{};
 
     co_await to(pool());
 
+    const Port<fs::Files> through = port_of(std::move(files));
+
     if (code == "auto") {
         const std::optional<text::Language> system = text::proposed();
-        const std::string found = system ? nearest(system->tag(), co_await listed(folders)) : std::string{};
+        const std::string found = system ? nearest(system->tag(), co_await listed(through, folders)) : std::string{};
 
         code = found.empty() ? std::string{base} : found;
     }
@@ -161,7 +167,7 @@ Task<void> Texts::read(std::vector<Path> folders, std::string code) {
     std::string spoken{base};
 
     if (wording::code(code)) {
-        if (const std::optional<std::string> given = co_await fetched(folders, code)) {
+        if (const std::optional<std::string> given = co_await fetched(through, folders, code)) {
             try {
                 const json::Value document = json::parsed(*given);
                 const text::Language language{code};
@@ -239,20 +245,23 @@ char32_t Texts::letter(std::size_t key) const {
 
 // The languages a program can speak: English first, with the name compiled in, then those with
 // files in `folders`, sorted by code, each with its name in its own language (`meta.name`), or an
-// empty one when its file has none or cannot be read. The pool reads the files.
-Task<std::vector<Spoken>> Texts::languages(std::vector<Path> folders) const {
+// empty one when its file has none or cannot be read. The pool reads the files, through `files` or
+// the default port when it is none.
+Task<std::vector<Spoken>> Texts::languages(std::vector<Path> folders, std::shared_ptr<fs::Files> files) const {
     Executor& back = co_await detail::Here{};
 
     co_await to(pool());
 
+    const Port<fs::Files> through = port_of(std::move(files));
+
     std::vector<Spoken> made{Spoken{std::string{base}, name_}};
 
-    for (std::string& code : co_await listed(folders)) {
+    for (std::string& code : co_await listed(through, folders)) {
         if (code == base) continue;
 
         Spoken one{code, {}};
 
-        if (const std::optional<std::string> given = co_await fetched(folders, code)) {
+        if (const std::optional<std::string> given = co_await fetched(through, folders, code)) {
             try {
                 const json::Value document = json::parsed(*given);
                 const json::Value* name = wording::found(document, {"meta", "name"});

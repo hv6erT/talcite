@@ -176,7 +176,8 @@ struct Shown {
 };
 
 // The rows from the view's top, one to a row of the screen; the current one in the look of the
-// focus only while the list has the focus. Past the last row the ground stays plain.
+// focus only while the list has the focus, and in the look of `current` always. Past the last row
+// the ground stays plain.
 TRIAL("List: the rows it shows, the current one lit only with the focus") {
     Shown shown{3};
 
@@ -199,6 +200,13 @@ TRIAL("List: the rows it shows, the current one lit only with the focus") {
     Shown idle{3, {12, 5}, false};
 
     OUGHT(!idle.scene.at({0, 0}).look.reverse);
+
+    idle.document.sheet(tal::StyleSheet::parsed(R"({"rules": [{"select": "list:current", "style": {"bold": true}}], "glyphs": {}})"));
+    idle.list->current = 2;
+    idle.scene.wait(0ms);
+
+    OUGHT(idle.scene.at({0, 2}).look.bold);
+    OUGHT(!idle.scene.at({0, 0}).look.bold);
 
     idle.list->enable(false);
     idle.scene.wait(0ms);
@@ -694,6 +702,76 @@ TRIAL("Tree: indents and marks, opened and closed by keys and clicks") {
     scene.click({4, 2});
 
     SAME(model->lines.size(), std::size_t{5});
+}
+
+// With `branches` the indent of a tree holds the lines of its branches: down from each level that
+// goes on below, a joint into a row that more follow at its level, a corner into the last one; a
+// row at the top has none, and the marks stay where a click finds them.
+TRIAL("Tree: the lines of the branches") {
+    // A root holding a branch of two leaves and a branch of one.
+    class Fixed : public TreeModel {
+    public:
+        struct Line {
+            std::string text;
+            int depth = 0;
+            Branch branch = Branch::leaf;
+        };
+
+        std::vector<Line> lines{{"root", 0, Branch::open}, {"one", 1, Branch::open}, {"a", 2, Branch::leaf}, {"b", 2, Branch::leaf}, {"two", 1, Branch::open}, {"c", 2, Branch::leaf}};
+        int asked = 0;
+
+        // How many rows show.
+        std::size_t rows() const override { return lines.size(); }
+
+        // The text of a row.
+        Entry entry(std::size_t row, std::size_t column) const override {
+            (void)column;
+
+            Entry made;
+
+            made.text = lines[row].text;
+
+            return made;
+        }
+
+        // The depth of a row.
+        int depth(std::size_t row) const override { return lines[row].depth; }
+
+        // The branch of a row.
+        Branch branch(std::size_t row) const override { return lines[row].branch; }
+
+        // Counts what it is asked to open or close.
+        void open(std::size_t row, bool on) override {
+            (void)row;
+            (void)on;
+            ++asked;
+        }
+    };
+
+    Scene scene{{.screen = {12, 7}}};
+    Document document{scene.time()};
+    auto model = std::make_shared<Fixed>();
+    Tree& tree = document.children().add<Tree>(model);
+
+    tree.branches = true;
+    scene.show(document);
+    scene.wait(0ms);
+
+    SAME(scene.row(0), std::string{"▾ root      "});
+    SAME(scene.row(1), std::string{"├─▾ one     "});
+    SAME(scene.row(2), std::string{"│ ├─  a     "});
+    SAME(scene.row(3), std::string{"│ └─  b     "});
+    SAME(scene.row(4), std::string{"└─▾ two     "});
+    SAME(scene.row(5), std::string{"  └─  c     "});
+
+    scene.click({2, 4});
+
+    SAME(model->asked, 1);
+
+    tree.branches = false;
+    scene.wait(0ms);
+
+    SAME(scene.row(2), std::string{"      a     "});
 }
 
 // The bar stands beside its view: the track down its column, the thumb as long as the window is to

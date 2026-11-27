@@ -14,7 +14,7 @@
 
 namespace tal {
 
-enum class Modal { no, yes };
+enum class Modal { no, yes, loose };
 
 struct Closed : Event {};
 

@@ -21,9 +21,6 @@ namespace tal::rendering {
 
 namespace {
 
-// The trouble of a frame that breaks the protocol.
-Trouble broken(std::string said) { return Trouble{Kind::malformed, "The renderer broke the protocol: " + std::move(said)}; }
-
 // The number of `much` bytes at `at` of `from`, little-endian.
 std::uint64_t little(std::span<const std::byte> from, std::size_t at, std::size_t much) {
     std::uint64_t made = 0;
@@ -72,7 +69,7 @@ std::optional<Frame> Unframing::next() {
 
     const std::uint64_t length = little(left, 0, 4);
 
-    if (length < 5 || length > most_ - 4) throw broken("a frame of " + std::to_string(length) + " bytes.");
+    if (length < 5 || length > most_ - 4) throw Trouble{Kind::malformed, "The renderer broke the protocol: a frame of " + std::to_string(length) + " bytes."};
 
     if (left.size() < 4 + length) return std::nullopt;
 
@@ -137,7 +134,7 @@ Writing& Writing::bytes(std::span<const std::byte> value) {
 
 // The next `much` bytes. Throws `Trouble` malformed when fewer are left.
 std::span<const std::byte> Reading::taken(std::size_t much) {
-    if (much > from_.size() - at_) throw broken("a frame shorter than what it says.");
+    if (much > from_.size() - at_) throw Trouble{Kind::malformed, "The renderer broke the protocol: a frame shorter than what it says."};
 
     const std::span<const std::byte> made = from_.subspan(at_, much);
 
@@ -159,7 +156,7 @@ std::uint64_t Reading::u64() { return little(taken(8), 0, 8); }
 double Reading::f64() {
     const double made = std::bit_cast<double>(little(taken(8), 0, 8));
 
-    if (!std::isfinite(made)) throw broken("a number that is not finite.");
+    if (!std::isfinite(made)) throw Trouble{Kind::malformed, "The renderer broke the protocol: a number that is not finite."};
 
     return made;
 }
@@ -180,7 +177,7 @@ std::span<const std::byte> Reading::rest() { return taken(from_.size() - at_); }
 
 // Throws `Trouble` malformed when anything is left.
 void Reading::ended() const {
-    if (at_ != from_.size()) throw broken("a frame longer than what it says.");
+    if (at_ != from_.size()) throw Trouble{Kind::malformed, "The renderer broke the protocol: a frame longer than what it says."};
 }
 
 // The hello in `payload`. Throws `Trouble` malformed for one of another shape.
@@ -208,7 +205,7 @@ Trouble failure(std::span<const std::byte> payload) {
 
     from.ended();
 
-    if (kind > static_cast<std::uint8_t>(Kind::other)) throw broken("a trouble of no kind.");
+    if (kind > static_cast<std::uint8_t>(Kind::other)) throw Trouble{Kind::malformed, "The renderer broke the protocol: a trouble of no kind."};
 
     return Trouble{static_cast<Kind>(kind), std::move(said)};
 }
@@ -231,11 +228,11 @@ media::Pixels pictured(Reading& from, media::Size size) {
     const std::uint32_t wide = from.u32();
     const std::uint32_t high = from.u32();
 
-    if (wide != size.width || high != size.height) throw broken("a picture of another size than asked.");
+    if (wide != size.width || high != size.height) throw Trouble{Kind::malformed, "The renderer broke the protocol: a picture of another size than asked."};
 
     const std::span<const std::byte> rgba = from.rest();
 
-    if (rgba.size() != std::size_t{wide} * high * 4) throw broken("a picture of a wrong length.");
+    if (rgba.size() != std::size_t{wide} * high * 4) throw Trouble{Kind::malformed, "The renderer broke the protocol: a picture of a wrong length."};
 
     std::vector<media::Still> stills(1);
 
@@ -250,7 +247,7 @@ std::vector<docs::Page> paged(std::span<const std::byte> payload) {
     Reading from{payload};
     const std::uint32_t count = from.u32();
 
-    if (std::uint64_t{count} * 16 > payload.size()) throw broken("more pages than it sent.");
+    if (std::uint64_t{count} * 16 > payload.size()) throw Trouble{Kind::malformed, "The renderer broke the protocol: more pages than it sent."};
 
     std::vector<docs::Page> made(count);
 
@@ -258,12 +255,58 @@ std::vector<docs::Page> paged(std::span<const std::byte> payload) {
         one.width = from.f64();
         one.height = from.f64();
 
-        if (one.width <= 0 || one.height <= 0) throw broken("a page of no area.");
+        if (one.width <= 0 || one.height <= 0) throw Trouble{Kind::malformed, "The renderer broke the protocol: a page of no area."};
     }
 
     from.ended();
 
     return made;
+}
+
+// The letters of a page as its process told them: their number, then of each its code and its box
+// (left, top, width, height in fractions of the page as it is shown). Throws `Trouble` malformed
+// for more letters than the frame holds, a code that is no character, or a box that is no number,
+// of a negative size or not within the page.
+std::vector<docs::Letter> lettered(std::span<const std::byte> payload) {
+    Reading from{payload};
+    const std::uint32_t count = from.u32();
+
+    if (std::uint64_t{count} * 36 > payload.size()) throw Trouble{Kind::malformed, "The renderer broke the protocol: more letters than it sent."};
+
+    std::vector<docs::Letter> made(count);
+
+    for (docs::Letter& one : made) {
+        const std::uint32_t code = from.u32();
+
+        if (code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)) throw Trouble{Kind::malformed, "The renderer broke the protocol: a letter that is no character."};
+
+        one.code = static_cast<char32_t>(code);
+        one.box.left = from.f64();
+        one.box.top = from.f64();
+        one.box.width = from.f64();
+        one.box.height = from.f64();
+
+        const docs::Region& box = one.box;
+        const bool numbers = std::isfinite(box.left) && std::isfinite(box.top) && std::isfinite(box.width) && std::isfinite(box.height);
+
+        if (!numbers || box.width < 0 || box.height < 0 || box.left < 0 || box.top < 0 || box.left + box.width > 1 || box.top + box.height > 1)
+            throw Trouble{Kind::malformed, "The renderer broke the protocol: a letter not within its page."};
+    }
+
+    from.ended();
+
+    return made;
+}
+
+// The payload that tells `letters`, as `lettered` reads it.
+Bytes letters_with(const std::vector<docs::Letter>& letters) {
+    Writing made;
+
+    made.u32(static_cast<std::uint32_t>(letters.size()));
+
+    for (const docs::Letter& one : letters) made.u32(static_cast<std::uint32_t>(one.code)).f64(one.box.left).f64(one.box.top).f64(one.box.width).f64(one.box.height);
+
+    return made.done();
 }
 
 namespace {
@@ -273,7 +316,7 @@ namespace {
 std::string said(Reading& from) {
     std::string made = from.text();
 
-    if (made.size() > widest_said) throw broken("a title or an address longer than 64 KiB.");
+    if (made.size() > widest_said) throw Trouble{Kind::malformed, "The renderer broke the protocol: a title or an address longer than 64 KiB."};
 
     return made;
 }
@@ -290,7 +333,7 @@ Changed changing(std::span<const std::byte> payload) {
     const auto flag = [&from] {
         const std::uint8_t one = from.u8();
 
-        if (one > 1) throw broken("a flag other than 0 and 1.");
+        if (one > 1) throw Trouble{Kind::malformed, "The renderer broke the protocol: a flag other than 0 and 1."};
 
         return one == 1;
     };
@@ -330,7 +373,7 @@ Refused refusing(std::span<const std::byte> payload) {
     made.address = said(from);
     from.ended();
 
-    if (made.reason > last_refusal) throw broken("a refusal of no reason.");
+    if (made.reason > last_refusal) throw Trouble{Kind::malformed, "The renderer broke the protocol: a refusal of no reason."};
 
     return made;
 }
@@ -367,6 +410,7 @@ std::string_view named(Sort sort) {
         case Sort::shot: return "shot";
         case Sort::resize: return "resize";
         case Sort::dismiss: return "dismiss";
+        case Sort::letters: return "letters";
         case Sort::block: return "block";
         case Sort::unread: return "unread";
         case Sort::go: return "go";

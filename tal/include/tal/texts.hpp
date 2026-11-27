@@ -4,11 +4,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "tal/fs.hpp"
 #include "tal/path.hpp"
 #include "tal/task.hpp"
 
@@ -25,7 +27,7 @@ class Texts {
 public:
     Texts(std::span<const std::string_view> keys, std::string_view english);
 
-    [[nodiscard]] Task<void> read(std::vector<Path> folders, std::string code);
+    [[nodiscard]] Task<void> read(std::vector<Path> folders, std::string code, std::shared_ptr<fs::Files> files = nullptr);
 
     [[nodiscard]] const std::string& code() const { return code_; }
 
@@ -35,7 +37,7 @@ public:
 
     [[nodiscard]] char32_t letter(std::size_t key) const;
 
-    [[nodiscard]] Task<std::vector<Spoken>> languages(std::vector<Path> folders) const;
+    [[nodiscard]] Task<std::vector<Spoken>> languages(std::vector<Path> folders, std::shared_ptr<fs::Files> files = nullptr) const;
 
     [[nodiscard]] static std::string nearest(std::string_view wanted, const std::vector<std::string>& known);
 

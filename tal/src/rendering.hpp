@@ -32,6 +32,7 @@ enum class Sort : std::uint8_t {
     shot = 14,
     resize = 15,
     dismiss = 16,
+    letters = 17,
     block = 20,
     unread = 21,
     go = 30,
@@ -71,6 +72,7 @@ inline constexpr std::uint8_t documents = 1;
 inline constexpr std::uint8_t pages = 2;
 inline constexpr std::uint8_t scripts = 4;
 inline constexpr std::uint8_t network = 8;
+inline constexpr std::uint8_t letters = 16;
 
 inline constexpr std::size_t head = 9;
 inline constexpr std::size_t widest = media::ceiling * 4 + 4096;
@@ -168,6 +170,10 @@ struct Hello {
 [[nodiscard]] media::Pixels pictured(Reading& from, media::Size size);
 
 [[nodiscard]] std::vector<docs::Page> paged(std::span<const std::byte> payload);
+
+[[nodiscard]] std::vector<docs::Letter> lettered(std::span<const std::byte> payload);
+
+[[nodiscard]] Bytes letters_with(const std::vector<docs::Letter>& letters);
 
 struct Changed {
     std::uint32_t view = 0;

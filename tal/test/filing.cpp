@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -63,6 +64,19 @@ struct Bench {
         }
 
         return std::nullopt;
+    }
+
+    // What a task fails with, said, and the code of the system's failure behind it after "#" (0
+    // for none), or "none" when it does not fail.
+    template <typename T>
+    std::string failure_of(tal::Task<T> work) {
+        try {
+            (void)tal::wait(self().loop, std::move(work));
+        } catch (const tal::Trouble& why) {
+            return std::string{why.what()} + " #" + std::to_string(why.code());
+        }
+
+        return "none";
     }
 
     // Writes a file with the given text.
@@ -207,6 +221,38 @@ FILES_TRIAL("a file written is read back whole and in parts; look() tells its si
     SAME(entry.size, std::uint64_t{6});
     OUGHT(desk.near(entry.modified));
     OUGHT(entry.where == desk.at("/a.txt"));
+}
+
+// The time of birth: the memory gives it always, a disk where its system keeps it. Writing over an
+// entry in place keeps it (the memory; a disk writes a new file beside and renames it over); a copy
+// is born anew.
+FILES_TRIAL("an entry has its time of birth; a write over it keeps it, a copy is born anew", files_trial_birth) {
+    Desk desk;
+
+    desk.put("/a.txt", "a");
+
+    const tal::fs::Entry first = desk.run(desk.files.look(desk.at("/a.txt")));
+
+    if constexpr (Desk::manual) OUGHT(first.created.has_value());
+
+    if (first.created) OUGHT(desk.near(*first.created));
+
+    if constexpr (Desk::manual) {
+        desk.time->advance(1h);
+        desk.put("/a.txt", "b");
+
+        OUGHT(desk.run(desk.files.look(desk.at("/a.txt"))).created == first.created);
+    }
+
+    desk.run(desk.files.copy(desk.at("/a.txt"), desk.at("/b.txt")));
+
+    const tal::fs::Entry copy = desk.run(desk.files.look(desk.at("/b.txt")));
+
+    if constexpr (Desk::manual) OUGHT(copy.created.has_value() && copy.created != first.created);
+
+    if (copy.created) OUGHT(desk.near(*copy.created));
+
+    OUGHT(desk.run(desk.files.list(desk.at("/"))).back().created == copy.created);
 }
 
 FILES_TRIAL("list() gives the entries in order of name; a missing folder, a file, a relative path refuse", files_trial_2) {
@@ -791,6 +837,23 @@ TRIAL("Disk: names that are not UTF-8 come back whole") {
     SAME(tal::text::of(desk.run(desk.files.read(found[0].where))), std::string{"x"});
 }
 
+// The root of a local volume of the system is a folder, looked at and listed like any other: on
+// Windows its long form \\?\C:\ has no entry of its own, MinGW's standard library cannot read it,
+// and a pattern after it must not double its separator.
+TRIAL("Disk: the root of a volume is a folder that lists") {
+    DiskDesk desk;
+
+    const std::vector<tal::fs::Volume> all = desk.run(desk.files.volumes());
+    const auto local = std::find_if(all.begin(), all.end(), [](const tal::fs::Volume& one) { return !one.remote && !one.removable && one.total > 0; });
+
+    OUGHT(local != all.end());
+
+    if (local == all.end()) return;
+
+    OUGHT(desk.run(desk.files.look(local->where)).type == tal::fs::Type::folder);
+    OUGHT(!desk.run(desk.files.list(local->where)).empty());
+}
+
 namespace {
 
 // The next changes of a watch, or none when nothing came within two seconds.
@@ -916,23 +979,118 @@ TRIAL("Disk: changes of content settle and merge before they reach the reader") 
     SAME(first.size(), told(desk.at("/one.log")) + told(desk.at("/two.log")));
 }
 
+#ifdef _WIN32
+namespace {
+
+// The folder on a network share that the trials of shares work in, as TAL_SHARE names it (read as
+// UTF-16, so that any name comes whole); none when it is not set. The name goes over as it is
+// spelled: the generic form of libstdc++ takes \\server for a root with a separator too many and
+// leaves \server, a folder on the current drive.
+std::optional<Path> shared_folder() {
+    const wchar_t* named = _wgetenv(L"TAL_SHARE");
+
+    if (named == nullptr) return std::nullopt;
+
+    const std::u8string spelled = std::filesystem::path{named}.u8string();
+
+    return Path::restored(std::string{spelled.begin(), spelled.end()});
+}
+
+}
+
+// A folder on a network share (TAL_SHARE) is a folder like any: a folder made in it, a file
+// written, read, looked at, copied, moved and listed there, then all of it removed. The file is
+// looked for past tal too, so that it is on the share and not in a folder of the same name on the
+// current drive.
+TRIAL("Disk: a folder on a network share works as a local one") {
+    const std::optional<Path> on = shared_folder();
+
+    if (!on) return;
+
+    DiskDesk desk;
+    const Path folder = *on / "tal-share-trial";
+
+    desk.run(desk.files.make(folder));
+    desk.run(desk.files.write(folder / "a.txt", tal::bytes("Poirot")));
+
+    OUGHT(std::filesystem::exists(std::filesystem::path{_wgetenv(L"TAL_SHARE")} / L"tal-share-trial" / L"a.txt"));
+    SAME(tal::text::of(desk.run(desk.files.read(folder / "a.txt"))), std::string{"Poirot"});
+    OUGHT(desk.run(desk.files.look(folder)).type == Type::folder);
+    SAME(desk.run(desk.files.look(folder / "a.txt")).size, std::uint64_t{6});
+
+    desk.run(desk.files.copy(folder / "a.txt", folder / "b.txt"));
+    desk.run(desk.files.move(folder / "b.txt", folder / "c.txt"));
+
+    std::vector<std::string> names;
+
+    for (const tal::fs::Entry& one : desk.run(desk.files.list(folder))) names.emplace_back(one.where.name());
+
+    SAME(names, (std::vector<std::string>{"a.txt", "c.txt"}));
+
+    desk.run(desk.files.remove(folder, {false, true}));
+
+    OUGHT(desk.refused(desk.files.look(folder)) == tal::Kind::missing);
+}
+#endif
+
 // The trash of freedesktop.org, here under a home of the trial's own, so that the trial leaves
 // nothing in the trash of the person running it: the entry goes to `files`, a `.trashinfo` tells
 // where it was, and a second entry of the same name gets a free one. Windows has its recycle bin
 // behind the shell; trying it puts a file into the bin of whoever runs the trials, so it is tried
-// only when TAL_TRASH_TRIAL is set.
+// only when TAL_TRASH_TRIAL is set. Where there is no bin, in the folder on a share TAL_SHARE
+// names, a file and a folder with a file are refused as unsupported and stay whole.
 TRIAL("Disk: remove() into the trash keeps the entry there and tells where it was") {
     DiskDesk desk;
 
     desk.run(desk.files.make(desk.at("/a/inner")));
     desk.put("/a/inner/x.txt", "x");
 
+    OUGHT(desk.refused(desk.files.restore(tal::fs::Trashed{desk.at("/x.txt"), {}})) == tal::Kind::unsupported);
+
 #ifdef _WIN32
+    if (const std::optional<Path> on = shared_folder()) {
+        const Path file = *on / "tal-trash-trial.txt";
+        const Path folder = *on / "tal-trash-trial";
+
+        desk.run(desk.files.write(file, tal::bytes("x")));
+        desk.run(desk.files.make(folder));
+        desk.run(desk.files.write(folder / "x.txt", tal::bytes("x")));
+
+        SAME(desk.failure_of(desk.files.remove(file, {true, false})), std::string{"There is no recycle bin here. #0"});
+        SAME(desk.failure_of(desk.files.remove(folder, {true, true})), std::string{"There is no recycle bin here. #0"});
+        SAME(desk.failure_of(desk.files.trash(file)), std::string{"There is no recycle bin here. #0"});
+        SAME(desk.failure_of(desk.files.remove(file, {true, false})), std::string{"There is no recycle bin here. #0"});
+        OUGHT(!desk.refused(desk.files.look(file)).has_value());
+        OUGHT(!desk.refused(desk.files.look(folder / "x.txt")).has_value());
+
+        desk.run(desk.files.remove(file));
+        desk.run(desk.files.remove(folder, {false, true}));
+    }
+
     if (std::getenv("TAL_TRASH_TRIAL") == nullptr) return;
 
     desk.run(desk.files.remove(desk.at("/a"), {true, true}));
 
     OUGHT(!desk.there("/a"));
+
+    desk.put("/c.txt", "Japp");
+
+    const tal::fs::Trashed thrown = desk.run(desk.files.trash(desk.at("/c.txt")));
+
+    OUGHT(thrown.from == desk.at("/c.txt"));
+    OUGHT(thrown.kept.name().starts_with("$R"));
+    OUGHT(!desk.there("/c.txt"));
+
+    desk.put("/c.txt", "taken");
+
+    OUGHT(desk.refused(desk.files.restore(thrown)) == tal::Kind::exists);
+
+    desk.run(desk.files.remove(desk.at("/c.txt")));
+    desk.run(desk.files.restore(thrown));
+
+    SAME(desk.got("/c.txt"), std::string{"Japp"});
+    OUGHT(desk.refused(desk.files.look(thrown.kept)) == tal::Kind::missing);
+    OUGHT(desk.refused(desk.files.look(thrown.kept.parent() / ("$I" + std::string{thrown.kept.name().substr(2)}))) == tal::Kind::missing);
 #else
     const std::filesystem::path home = desk.made / "home";
     const char* was = std::getenv("XDG_DATA_HOME");
@@ -943,6 +1101,19 @@ TRIAL("Disk: remove() into the trash keeps the entry there and tells where it wa
     desk.run(desk.files.remove(desk.at("/a"), {true, true}));
     desk.put("/a", "second");
     desk.run(desk.files.remove(desk.at("/a"), {true, false}));
+    desk.put("/c.txt", "Japp");
+
+    const tal::fs::Trashed thrown = desk.run(desk.files.trash(desk.at("/c.txt")));
+    const bool kept_there = std::filesystem::exists(home / "Trash/files/c.txt") && std::filesystem::exists(home / "Trash/info/c.txt.trashinfo");
+
+    desk.put("/c.txt", "taken");
+
+    const std::optional<tal::Kind> taken = desk.refused(desk.files.restore(thrown));
+
+    desk.run(desk.files.remove(desk.at("/c.txt")));
+    desk.run(desk.files.restore(thrown));
+
+    const std::optional<tal::Kind> gone = desk.refused(desk.files.restore(thrown));
 
     if (was != nullptr) {
         ::setenv("XDG_DATA_HOME", kept.c_str(), 1);
@@ -958,7 +1129,88 @@ TRIAL("Disk: remove() into the trash keeps the entry there and tells where it wa
     const std::string told{std::istreambuf_iterator<char>{info}, std::istreambuf_iterator<char>{}};
 
     OUGHT(told.starts_with("[Trash Info]\nPath=" + std::string{desk.at("/a").stored()} + "\nDeletionDate="));
+    OUGHT(thrown.from == desk.at("/c.txt"));
+    OUGHT(thrown.kept == DiskDesk::rooted(home / "Trash/files") / "c.txt");
+    OUGHT(kept_there);
+    OUGHT(taken == tal::Kind::exists);
+    SAME(desk.got("/c.txt"), std::string{"Japp"});
+    OUGHT(!std::filesystem::exists(home / "Trash/files/c.txt"));
+    OUGHT(!std::filesystem::exists(home / "Trash/info/c.txt.trashinfo"));
+    OUGHT(gone == tal::Kind::missing);
 #endif
+}
+
+// A trash that gives entries back: trash() tells where the entry went and restore() brings it back
+// with all it held, refusing a place taken (or taking it, or another name, as told), a folder that
+// is gone, and an entry no longer in the trash; two entries of one name keep apart there, and a
+// watch sees the entry come back. An adapter that keeps no such trash throws entries
+// away as remove() does and refuses to restore.
+TRIAL("Memory: trash() tells where the entry went, restore() brings it back") {
+    MemoryDesk desk;
+
+    desk.run(desk.files.make(desk.at("/a/inner")));
+    desk.put("/a/inner/x.txt", "x");
+
+    const tal::fs::Trashed thrown = desk.run(desk.files.trash(desk.at("/a")));
+
+    OUGHT(thrown.from == desk.at("/a"));
+    OUGHT(!thrown.kept.empty());
+    OUGHT(!desk.there("/a"));
+    OUGHT(desk.memory.trashed() == std::vector<Path>{desk.at("/a")});
+
+    desk.put("/a", "taken");
+
+    OUGHT(desk.refused(desk.files.restore(thrown)) == tal::Kind::exists);
+
+    desk.run(desk.files.restore(thrown, Conflict::rename));
+
+    SAME(desk.got("/a (2)/inner/x.txt"), std::string{"x"});
+    OUGHT(desk.memory.trashed().empty());
+    OUGHT(desk.refused(desk.files.restore(thrown)) == tal::Kind::missing);
+
+    const tal::fs::Trashed again = desk.run(desk.files.trash(desk.at("/a (2)/inner")));
+
+    desk.run(desk.files.restore(tal::fs::Trashed{desk.at("/a (2)/inner"), again.kept}, Conflict::replace));
+
+    SAME(desk.got("/a (2)/inner/x.txt"), std::string{"x"});
+
+    const tal::fs::Trashed deep = desk.run(desk.files.trash(desk.at("/a (2)/inner")));
+
+    desk.run(desk.files.remove(desk.at("/a (2)"), {false, true}));
+
+    OUGHT(desk.refused(desk.files.restore(deep)) == tal::Kind::missing);
+
+    desk.run(desk.files.make(desk.at("/p")));
+    desk.run(desk.files.make(desk.at("/q")));
+    desk.put("/p/x.txt", "p");
+    desk.put("/q/x.txt", "q");
+
+    const tal::fs::Trashed first = desk.run(desk.files.trash(desk.at("/p/x.txt")));
+    const tal::fs::Trashed second = desk.run(desk.files.trash(desk.at("/q/x.txt")));
+    const tal::fs::Watch watch = desk.memory.watch(desk.at("/q"));
+
+    desk.run(desk.files.restore(second));
+
+    SAME(desk.got("/q/x.txt"), std::string{"q"});
+    OUGHT(first.kept != second.kept);
+    OUGHT(desk.run(watch.next()) == std::vector<Change>{Change{Change::Kind::created, desk.at("/q/x.txt"), {}}});
+
+    struct Plain : tal::fs::Memory {
+        tal::Task<tal::fs::Trashed> trash(const Path& what) override { return Files::trash(what); }
+
+        tal::Task<void> restore(const tal::fs::Trashed& one, Conflict how) override { return Files::restore(one, how); }
+    };
+
+    Plain plain;
+
+    tal::wait(desk.loop, plain.write(Path{"/b.txt"}, tal::bytes("b")));
+
+    const tal::fs::Trashed blind = tal::wait(desk.loop, plain.trash(Path{"/b.txt"}));
+
+    OUGHT(blind.from == Path{"/b.txt"});
+    OUGHT(blind.kept.empty());
+    OUGHT(plain.trashed() == std::vector<Path>{Path{"/b.txt"}});
+    OUGHT(desk.refused(plain.restore(blind, Conflict::fail)) == tal::Kind::unsupported);
 }
 
 // A time finer than a second is kept whole: change() sets it, look() tells it, and copy() carries

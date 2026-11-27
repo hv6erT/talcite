@@ -127,6 +127,8 @@ public:
 
     [[nodiscard]] std::size_t count() const { return pages_.size(); }
 
+    [[nodiscard]] std::optional<std::size_t> named_at(Spot screen) const;
+
     Property<std::size_t> current{*this, Effect::layout, 0};
     Property<bool> framed{*this, Effect::layout, false};
     Property<std::string> heading{*this, Effect::layout, {}};

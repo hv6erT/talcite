@@ -70,6 +70,7 @@ struct Entry {
     std::uintmax_t size = 0;
     Instant modified{};
     Instant accessed{};
+    std::optional<Instant> created;
     Attributes attributes;
     std::filesystem::perms rights = std::filesystem::perms::unknown;
     std::uintmax_t links = 1;
@@ -156,7 +157,9 @@ void unmade_at(const path& where);
 
 [[nodiscard]] std::shared_ptr<fs::Watching> watched(const path& where, bool deep);
 
-void trashed_at(const path& where);
+[[nodiscard]] path trashed_at(const path& where);
+
+void untrashed_at(const path& kept);
 
 [[nodiscard]] Bytes read_whole(const path& where);
 

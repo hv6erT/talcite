@@ -50,6 +50,8 @@ fs::Entry entered(const Entry& one, const Path& shown) {
     made.reach = one.attributes.stale ? fs::Type::other : typed(one.reach == platform::Kind::none ? one.kind : one.reach);
     made.size = one.kind == platform::Kind::file ? one.size : 0;
     made.modified = std::chrono::floor<std::chrono::system_clock::duration>(one.modified);
+
+    if (one.created) made.created = std::chrono::floor<std::chrono::system_clock::duration>(*one.created);
     made.attributes = fs::Attributes{one.attributes.hidden, one.attributes.readonly, one.attributes.system, one.attributes.executable};
 
     if (one.target) made.target = core::told(*one.target);
@@ -369,10 +371,49 @@ public:
                 amiss("The folder is not empty.", where, ::tal::Kind::other);
 
             if (how.trash) {
-                core::trashed_at(where);
+                (void)core::trashed_at(where);
             } else {
                 core::erase_whole(where);
             }
+        });
+    }
+
+    // Throws an entry with all it holds into the system's trash, telling where the trash keeps it
+    // (nothing when the system did not say).
+    Task<fs::Trashed> trash(const Path& what) override {
+        return offloaded([what] {
+            const path where = absolute(what);
+
+            not_root(what, "removed");
+
+            if (core::kind_at(where) == platform::Kind::none) amiss("There is no such entry.", where, ::tal::Kind::missing);
+
+            const path kept = core::trashed_at(where);
+
+            return fs::Trashed{what, kept.empty() ? Path{} : core::told(kept)};
+        });
+    }
+
+    // Gives an entry back from the system's trash to where it was, by the conflict rule `how` when
+    // the place is taken, and forgets the trash's record of it; the folder it was in must be there.
+    // Without a place in the trash nothing can come back.
+    Task<void> restore(const fs::Trashed& one, fs::Conflict how) override {
+        return offloaded([one, how] {
+            if (one.kept.empty()) amiss("The trash did not say where it keeps this.", absolute(one.from), ::tal::Kind::unsupported);
+
+            const path source = absolute(one.kept);
+            const path target = absolute(one.from);
+
+            if (core::kind_at(source) == platform::Kind::none) amiss("It is no longer in the trash.", source, ::tal::Kind::missing);
+
+            (void)folder_there(target.parent_path());
+
+            const auto [into, left] = settled(source, target, how);
+
+            if (!into) return;
+
+            core::move_whole(source, *into, left);
+            core::untrashed_at(source);
         });
     }
 

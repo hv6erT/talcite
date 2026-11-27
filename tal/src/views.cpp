@@ -194,7 +194,9 @@ void List::arrange(Area inside) {
 
 // The ground and the rows this frame paints, each in the look of its states, past the last row the
 // look of a plain row. The view paints its ground itself, since the focus of the view is the look
-// of its current row, not of all of it.
+// of its current row, not of all of it. The row under the cursor is `current` always and `focus`
+// too while the view has the focus, so that a sheet can show where the cursor stands in a view
+// the focus left.
 void List::paint(Canvas& onto) const {
     const Area seen = onto.seen();
     const int head = above();
@@ -214,6 +216,7 @@ void List::paint(Canvas& onto) const {
 
         States states = ground;
 
+        states.set(State::current, row == here);
         states.set(State::focus, lit && row == here);
         states.set(State::mark, marked(row));
 
@@ -527,11 +530,24 @@ Tree::Tree(std::shared_ptr<TreeModel> model) : List(std::move(model)) {
 }
 
 // The row `row`: its indent, the glyph of its branch (`tree.open`, `tree.closed`, or a space for a
-// leaf), a space and its first column.
+// leaf), a space and its first column. With `branches` the indent holds the lines of the branches
+// (the part "branch"): down from every level whose row has more below it, and into the row from
+// the left, a joint when more follow it at its level and a corner at the last.
 void Tree::drawn(Canvas& onto, std::size_t row, States states) const {
-    const int indent = 2 * std::max(tree().depth(row), 0);
+    const int depth = std::max(tree().depth(row), 0);
+    const int indent = 2 * depth;
     const Branch branch = tree().branch(row);
     const std::string_view mark = branch == Branch::open ? glyph("tree.open") : branch == Branch::closed ? glyph("tree.closed") : " ";
+
+    if (*branches && depth > 0) {
+        const Look lines = look("branch", states);
+
+        for (int level = 1; level < depth; ++level)
+            if (followed(row, level)) (void)onto.put({2 * (level - 1), 0}, glyph("line.thin.upright"), lines);
+
+        (void)onto.put({indent - 2, 0}, glyph(followed(row, depth) ? "line.thin.left.joint" : "line.thin.lower.left"), lines);
+        (void)onto.put({indent - 1, 0}, glyph("line.thin.across"), lines);
+    }
 
     (void)onto.put({indent, 0}, mark, look({}, states));
 
@@ -551,6 +567,20 @@ void Tree::clicked(std::size_t row, int x) {
 
 // The model, which a tree is made with as a tree.
 TreeModel& Tree::tree() const { return static_cast<TreeModel&>(model()); }
+
+// Whether a row at `depth` comes after `row` before any row less deep: whether the branch at that
+// level goes on below it.
+bool Tree::followed(std::size_t row, int depth) const {
+    for (std::size_t next = row + 1; next < model().rows(); ++next) {
+        const int here = tree().depth(next);
+
+        if (here < depth) return false;
+
+        if (here == depth) return true;
+    }
+
+    return false;
+}
 
 // A bar for the view `one`, in the class "scroll", with the state `focus` while the view has it:
 // the glyph `scroll.track.upright` down its column and the thumb (`scroll.thumb`, the part "thumb")

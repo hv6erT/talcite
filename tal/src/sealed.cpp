@@ -89,9 +89,6 @@ namespace {
 
 using Kept = std::shared_ptr<Sealed::Held>;
 
-// The trouble of a channel that is closed.
-Trouble gone() { return Trouble{Kind::broken, "The channel is closed."}; }
-
 // Closes the stream of `held` for good; called under its lock.
 void shutting(Sealed::Held& held) {
     held.shut = true;
@@ -223,7 +220,7 @@ Task<Bytes> framed(Kept held) {
         {
             const std::lock_guard<std::mutex> kept{held->guard};
 
-            if (held->shut) throw gone();
+            if (held->shut) throw Trouble{Kind::broken, "The channel is closed."};
 
             if (std::optional<Bytes> ready = whole(*held)) co_return std::move(*ready);
         }
@@ -335,7 +332,7 @@ Task<Sealed> Sealed::opened(Stream one, std::shared_ptr<Handshake> how, Port<cry
 // frames enter the queue; sealed and queued apart, a send from another thread could come between
 // with the next number and go first, and the other side would refuse both.
 Task<void> Sealed::send(Bytes what) const {
-    if (held_ == nullptr) throw gone();
+    if (held_ == nullptr) throw Trouble{Kind::broken, "The channel is closed."};
 
     if (what.size() > longest) throw Trouble{Kind::other, "The message is too long for the channel."};
 
@@ -345,7 +342,7 @@ Task<void> Sealed::send(Bytes what) const {
     {
         const std::lock_guard<std::mutex> kept{held->guard};
 
-        if (held->shut) throw gone();
+        if (held->shut) throw Trouble{Kind::broken, "The channel is closed."};
 
         const Bytes head = headed(what.size() + 16);
         const Bytes sealed = held->cipher->sealed(held->keys.sending, nonce(held->sent++), head, what);
@@ -359,7 +356,7 @@ Task<void> Sealed::send(Bytes what) const {
 
 // The next message, opened and checked; a forged or lost one closes the channel.
 Task<Bytes> Sealed::received() const {
-    if (held_ == nullptr) throw gone();
+    if (held_ == nullptr) throw Trouble{Kind::broken, "The channel is closed."};
 
     const Kept held = held_;
     const Reading reading{*held};

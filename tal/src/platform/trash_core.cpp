@@ -12,7 +12,7 @@
 
 #include <windows.h>
 
-#include <shellapi.h>
+#include <shobjidl.h>
 
 #else
 
@@ -34,23 +34,232 @@ namespace tal::platform::core {
 
 #ifdef _WIN32
 
-// Throws the entry into the recycle bin through the shell, without asking and without a window.
-// The shell takes no \\?\ form, so the path goes as it is.
-void trashed_at(const path& where) {
-    std::wstring named = where.native();
+namespace {
 
-    named.push_back(L'\0');
+// A COM object held: released when the holder goes.
+template <typename T>
+class Held {
+public:
+    Held() = default;
 
-    SHFILEOPSTRUCTW how{};
+    ~Held() {
+        if (held_ != nullptr) held_->Release();
+    }
 
-    how.wFunc = FO_DELETE;
-    how.pFrom = named.c_str();
-    how.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI;
+    Held(const Held&) = delete;
+    Held& operator=(const Held&) = delete;
 
-    const int failed = SHFileOperationW(&how);
+    // Where a call that makes the object puts it.
+    [[nodiscard]] T** put() { return &held_; }
 
-    if (failed != 0 || how.fAnyOperationsAborted != 0)
-        amiss("Cannot move it to the recycle bin.", where, std::error_code{failed, std::system_category()});
+    // The object.
+    T* operator->() const { return held_; }
+
+    // The object, to pass on.
+    [[nodiscard]] T* get() const { return held_; }
+
+private:
+    T* held_ = nullptr;
+};
+
+// A single-threaded COM apartment of this thread while it lives, unless the thread had one of the
+// other kind already, which serves as well.
+class Apartment {
+public:
+    Apartment() : made_(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE)) {}
+
+    ~Apartment() {
+        if (SUCCEEDED(made_)) CoUninitialize();
+    }
+
+    Apartment(const Apartment&) = delete;
+    Apartment& operator=(const Apartment&) = delete;
+
+    // Whether the thread has an apartment to work in.
+    [[nodiscard]] bool held() const { return SUCCEEDED(made_) || made_ == RPC_E_CHANGED_MODE; }
+
+    // Why it has none.
+    [[nodiscard]] HRESULT trouble() const { return made_; }
+
+private:
+    HRESULT made_;
+};
+
+// The watcher of a deletion into the recycle bin. Before each item goes the shell says whether it
+// goes to the bin (`TSF_DELETE_RECYCLE_IF_POSSIBLE`); an item it would destroy instead stops the
+// whole operation there, before anything is gone, and the watcher remembers the refusal. After an
+// item the first failure is kept. It lives on the stack, so counting its references does nothing.
+class Binning final : public IFileOperationProgressSink {
+public:
+    bool refused = false;
+    HRESULT failed = S_OK;
+    std::wstring kept;
+
+    // The watcher as the interfaces it has.
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID asked, void** out) override {
+        if (asked == IID_IUnknown || asked == __uuidof(IFileOperationProgressSink)) {
+            *out = static_cast<IFileOperationProgressSink*>(this);
+
+            return S_OK;
+        }
+
+        *out = nullptr;
+
+        return E_NOINTERFACE;
+    }
+
+    // A reference more, uncounted.
+    ULONG STDMETHODCALLTYPE AddRef() override { return 1; }
+
+    // A reference less, uncounted.
+    ULONG STDMETHODCALLTYPE Release() override { return 1; }
+
+    // The item `item` about to be deleted as `flags` say: on to the bin, or the operation stopped.
+    HRESULT STDMETHODCALLTYPE PreDeleteItem(DWORD flags, IShellItem* item) override {
+        (void)item;
+
+        if ((flags & TSF_DELETE_RECYCLE_IF_POSSIBLE) != 0) return S_OK;
+
+        refused = true;
+
+        return HRESULT_FROM_WIN32(ERROR_CANCELLED);
+    }
+
+    // The item deleted, or not, as `result` says; the first failure is kept, and so is where the
+    // first item went in the bin (`made`), which is the entry itself.
+    HRESULT STDMETHODCALLTYPE PostDeleteItem(DWORD flags, IShellItem* item, HRESULT result, IShellItem* made) override {
+        (void)flags;
+        (void)item;
+
+        if (FAILED(result) && SUCCEEDED(failed)) failed = result;
+
+        PWSTR named = nullptr;
+
+        if (SUCCEEDED(result) && made != nullptr && kept.empty() && SUCCEEDED(made->GetDisplayName(SIGDN_FILESYSPATH, &named))) {
+            kept = named;
+            CoTaskMemFree(named);
+        }
+
+        return S_OK;
+    }
+
+    // The start of the operation, which the watcher lets be.
+    HRESULT STDMETHODCALLTYPE StartOperations() override { return S_OK; }
+
+    // The end of the operation, which the caller hears of itself.
+    HRESULT STDMETHODCALLTYPE FinishOperations(HRESULT result) override {
+        (void)result;
+
+        return S_OK;
+    }
+
+    // A renaming, which a deletion does not do.
+    HRESULT STDMETHODCALLTYPE PreRenameItem(DWORD, IShellItem*, LPCWSTR) override { return S_OK; }
+
+    // A renaming done, which a deletion does not do.
+    HRESULT STDMETHODCALLTYPE PostRenameItem(DWORD, IShellItem*, LPCWSTR, HRESULT, IShellItem*) override { return S_OK; }
+
+    // A move, which a deletion does not do.
+    HRESULT STDMETHODCALLTYPE PreMoveItem(DWORD, IShellItem*, IShellItem*, LPCWSTR) override { return S_OK; }
+
+    // A move done, which a deletion does not do.
+    HRESULT STDMETHODCALLTYPE PostMoveItem(DWORD, IShellItem*, IShellItem*, LPCWSTR, HRESULT, IShellItem*) override { return S_OK; }
+
+    // A copy, which a deletion does not do.
+    HRESULT STDMETHODCALLTYPE PreCopyItem(DWORD, IShellItem*, IShellItem*, LPCWSTR) override { return S_OK; }
+
+    // A copy done, which a deletion does not do.
+    HRESULT STDMETHODCALLTYPE PostCopyItem(DWORD, IShellItem*, IShellItem*, LPCWSTR, HRESULT, IShellItem*) override { return S_OK; }
+
+    // A new item, which a deletion does not make.
+    HRESULT STDMETHODCALLTYPE PreNewItem(DWORD, IShellItem*, LPCWSTR) override { return S_OK; }
+
+    // A new item made, which a deletion does not make.
+    HRESULT STDMETHODCALLTYPE PostNewItem(DWORD, IShellItem*, LPCWSTR, LPCWSTR, DWORD, HRESULT, IShellItem*) override { return S_OK; }
+
+    // The progress, which nobody shows.
+    HRESULT STDMETHODCALLTYPE UpdateProgress(UINT, UINT) override { return S_OK; }
+
+    // The timer of the progress, which nobody shows.
+    HRESULT STDMETHODCALLTYPE ResetTimer() override { return S_OK; }
+
+    // The timer of the progress paused, which nobody shows.
+    HRESULT STDMETHODCALLTYPE PauseTimer() override { return S_OK; }
+
+    // The timer of the progress going on, which nobody shows.
+    HRESULT STDMETHODCALLTYPE ResumeTimer() override { return S_OK; }
+};
+
+// The code of a failure of COM, as an error of the system.
+std::error_code failure_of(HRESULT result) { return std::error_code{static_cast<int>(result), std::system_category()}; }
+
+}
+
+// Throws the entry into the recycle bin through the shell, without asking and without a window,
+// and only into the bin: where the shell would destroy the entry or anything in it (a share, an
+// entry too large for the bin), nothing is deleted and the refusal is a `Trouble` of the kind
+// `unsupported`. The shell takes no \\?\ form, so the path goes as it is, with the system's
+// separators. It gives where the bin keeps the entry ($R… in $Recycle.Bin), or nothing when the
+// shell did not say.
+path trashed_at(const path& where) {
+    const Apartment apartment;
+
+    if (!apartment.held()) amiss("Cannot reach the recycle bin.", where, failure_of(apartment.trouble()));
+
+    path named = where;
+
+    named.make_preferred();
+
+    Held<IShellItem> item;
+    HRESULT result = SHCreateItemFromParsingName(named.c_str(), nullptr, IID_PPV_ARGS(item.put()));
+
+    if (FAILED(result)) amiss("Cannot move it to the recycle bin.", where, failure_of(result));
+
+    Held<IFileOperation> operation;
+
+    result = CoCreateInstance(__uuidof(FileOperation), nullptr, CLSCTX_ALL, IID_PPV_ARGS(operation.put()));
+
+    if (FAILED(result)) amiss("Cannot reach the recycle bin.", where, failure_of(result));
+
+    Binning watcher;
+    DWORD cookie = 0;
+
+    result = operation->SetOperationFlags(FOFX_RECYCLEONDELETE | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI | FOFX_EARLYFAILURE);
+
+    if (SUCCEEDED(result)) result = operation->Advise(&watcher, &cookie);
+
+    if (FAILED(result)) amiss("Cannot move it to the recycle bin.", where, failure_of(result));
+
+    result = operation->DeleteItem(item.get(), nullptr);
+
+    if (SUCCEEDED(result)) result = operation->PerformOperations();
+
+    BOOL aborted = FALSE;
+
+    (void)operation->GetAnyOperationsAborted(&aborted);
+    (void)operation->Unadvise(cookie);
+
+    if (watcher.refused) amiss("There is no recycle bin here.", where, ::tal::Kind::unsupported);
+
+    if (SUCCEEDED(result) && FAILED(watcher.failed)) result = watcher.failed;
+
+    if (SUCCEEDED(result) && aborted != FALSE) result = HRESULT_FROM_WIN32(ERROR_CANCELLED);
+
+    if (FAILED(result)) amiss("Cannot move it to the recycle bin.", where, failure_of(result));
+
+    return path{watcher.kept};
+}
+
+// Forgets an entry given back from the recycle bin, `kept` being its $R… there: the bin's record of
+// it, the $I… beside it of the same tail, goes. One already gone is no trouble.
+void untrashed_at(const path& kept) {
+    std::wstring named = kept.filename().native();
+
+    if (named.size() < 2 || named.rfind(L"$R", 0) != 0) return;
+
+    named[1] = L'I';
+
+    (void)DeleteFileW(longly(kept.parent_path() / named).c_str());
 }
 
 #else
@@ -170,9 +379,9 @@ std::string stamped_now() {
 }
 
 // Throws the entry into the trash of its medium: first its `.trashinfo`, made exclusively under a
-// free name, then the entry renamed into `files` under the same name. A rename that fails takes
-// the `.trashinfo` back, so the trash never tells of something it does not hold.
-void trashed_at(const path& where) {
+// free name, then the entry renamed into `files` under the same name, which it gives. A rename that
+// fails takes the `.trashinfo` back, so the trash never tells of something it does not hold.
+path trashed_at(const path& where) {
     const auto [trash, relative] = trash_for(where);
 
     made_private(trash / "files");
@@ -216,7 +425,7 @@ void trashed_at(const path& where) {
             continue;
         }
 
-        if (::rename(where.c_str(), into.c_str()) == 0) return;
+        if (::rename(where.c_str(), into.c_str()) == 0) return into;
 
         const std::error_code why = last_error();
 
@@ -226,6 +435,14 @@ void trashed_at(const path& where) {
     }
 
     amiss("The trash has no free name for it.", where, ::tal::Kind::full);
+}
+
+// Forgets an entry given back from the trash, `kept` being where `files` held it: its `.trashinfo`
+// goes. One already gone is no trouble.
+void untrashed_at(const path& kept) {
+    const path info = kept.parent_path().parent_path() / "info" / (kept.filename().native() + ".trashinfo");
+
+    (void)::unlink(info.c_str());
 }
 
 #endif

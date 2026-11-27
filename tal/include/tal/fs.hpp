@@ -42,6 +42,7 @@ struct Entry {
     std::optional<Path> target;
     std::uint64_t size = 0;
     std::chrono::system_clock::time_point modified;
+    std::optional<std::chrono::system_clock::time_point> created;
     Attributes attributes;
     std::optional<std::uint16_t> rights;
 };
@@ -65,6 +66,13 @@ struct Copying {
 struct Removing {
     bool trash = false;
     bool deep = false;
+};
+
+struct Trashed {
+    Path from;
+    Path kept;
+
+    friend bool operator==(const Trashed&, const Trashed&) = default;
 };
 
 struct Changing {
@@ -215,6 +223,10 @@ public:
 
     [[nodiscard]] virtual Task<void> remove(const Path& what, Removing how = {}) = 0;
 
+    [[nodiscard]] virtual Task<Trashed> trash(const Path& what);
+
+    [[nodiscard]] virtual Task<void> restore(const Trashed& one, Conflict how = Conflict::fail);
+
     [[nodiscard]] virtual Task<void> change(const Path& what, Changing how) = 0;
 
     [[nodiscard]] virtual Task<void> link(const Path& where, const Path& onto) = 0;
@@ -249,6 +261,10 @@ public:
 [[nodiscard]] Task<void> copy(const Path& from, const Path& to, Copying how = {});
 
 [[nodiscard]] Task<void> remove(const Path& what, Removing how = {});
+
+[[nodiscard]] Task<Trashed> trash(const Path& what);
+
+[[nodiscard]] Task<void> restore(const Trashed& one, Conflict how = Conflict::fail);
 
 [[nodiscard]] Task<void> change(const Path& what, Changing how);
 
@@ -289,6 +305,10 @@ public:
     [[nodiscard]] Task<void> copy(const Path& from, const Path& to, Copying how = {}) override;
 
     [[nodiscard]] Task<void> remove(const Path& what, Removing how = {}) override;
+
+    [[nodiscard]] Task<Trashed> trash(const Path& what) override;
+
+    [[nodiscard]] Task<void> restore(const Trashed& one, Conflict how = Conflict::fail) override;
 
     [[nodiscard]] Task<void> change(const Path& what, Changing how) override;
 

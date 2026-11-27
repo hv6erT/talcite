@@ -138,6 +138,8 @@ class Tree : public List {
 public:
     explicit Tree(std::shared_ptr<TreeModel> model);
 
+    Property<bool> branches{*this, Effect::paint, false};
+
 protected:
     void drawn(Canvas& onto, std::size_t row, States states) const override;
 
@@ -145,6 +147,8 @@ protected:
 
 private:
     [[nodiscard]] TreeModel& tree() const;
+
+    [[nodiscard]] bool followed(std::size_t row, int depth) const;
 
     Hooks heard_;
 };

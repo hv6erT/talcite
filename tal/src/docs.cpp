@@ -48,9 +48,6 @@ using rendering::Sort;
 
 constexpr std::size_t read_at_once = std::size_t{64} << 10;
 
-// The trouble of a process that ended, for `why`.
-Trouble ended(const std::string& engine, const std::string& why) { return Trouble{Kind::broken, "The renderer " + engine + " ended: " + why}; }
-
 // The bytes of the frame of `sort` asking `id` with `payload`; apart from the coroutines, which
 // take no braced lists. The payload is wiped once framed when it is `secret`.
 Bytes framed_as(Sort sort, std::uint32_t id, Bytes payload, bool secret = false) {
@@ -261,7 +258,7 @@ Task<void> sent_in(std::shared_ptr<Run> run, Turn turn, Bytes bytes) {
         refused = why;
     }
 
-    if (refused) throw ended(run->name, refused->what());
+    if (refused) throw Trouble{Kind::broken, "The renderer " + run->name + " ended: " + refused->what()};
 }
 
 // Writes `bytes` to `run`'s process after every write asked before it. Throws `Trouble` broken
@@ -487,7 +484,7 @@ public:
     std::pair<std::uint32_t, std::shared_ptr<Watched>> watching(std::uint64_t generation) {
         const std::lock_guard<std::mutex> kept{guard_};
 
-        if (!run_ || run_->ended || run_->generation != generation) throw ended(name_, "before it was asked.");
+        if (!run_ || run_->ended || run_->generation != generation) throw Trouble{Kind::broken, "The renderer " + name_ + " ended: before it was asked."};
 
         auto watched = std::make_shared<Watched>();
         const std::uint32_t number = ++views_;
@@ -537,7 +534,7 @@ private:
         const std::lock_guard<std::mutex> kept{guard_};
 
         if (!run_ || run_->ended || (generation != 0 && run_->generation != generation))
-            throw ended(name_, generation != 0 ? "what was open in it was lost." : "before it was asked.");
+            throw Trouble{Kind::broken, "The renderer " + name_ + " ended: " + (generation != 0 ? "what was open in it was lost." : "before it was asked.")};
 
         run_->waiting.emplace(++questions_, answer);
 
@@ -652,7 +649,7 @@ private:
         if (why && why->kind() == Kind::malformed) {
             engine->killed(run, *why);
         } else {
-            engine->killed(run, ended(engine->name_, why ? why->what() : "its output closed."));
+            engine->killed(run, Trouble{Kind::broken, "The renderer " + engine->name_ + " ended: " + (why ? why->what() : "its output closed.")});
         }
     }
 
@@ -848,7 +845,7 @@ private:
 
         for (auto& [id, answer] : waiting) answer.fail(failed);
 
-        const Trouble gone = why.kind() == Kind::broken ? why : ended(name_, why.what());
+        const Trouble gone = why.kind() == Kind::broken ? why : Trouble{Kind::broken, "The renderer " + name_ + " ended: " + why.what()};
 
         for (auto& [view, weak] : watched)
             if (const std::shared_ptr<Watched> one = weak.lock()) one->ended(gone);
@@ -873,9 +870,10 @@ private:
 // A document open in a process.
 class Opened final : public Document {
 public:
-    // The document `number` of the process `generation` of `engine`, with `pages`.
-    Opened(std::shared_ptr<Engine> engine, std::uint32_t number, std::uint64_t generation, std::vector<Page> pages)
-        : engine_(std::move(engine)), number_(number), generation_(generation), pages_(std::move(pages)) {}
+    // The document `number` of the process `generation` of `engine`, with `pages`, whose letters
+    // the process gives when `lettered`.
+    Opened(std::shared_ptr<Engine> engine, std::uint32_t number, std::uint64_t generation, std::vector<Page> pages, bool lettered)
+        : engine_(std::move(engine)), number_(number), generation_(generation), pages_(std::move(pages)), lettered_(lettered) {}
 
     // Closes the document in its process and lets go of its reader.
     ~Opened() override {
@@ -915,6 +913,20 @@ public:
         });
     }
 
+    // The letters of the page `page`. Throws `Trouble`: unsupported when the process gives no
+    // letters, other for a page that is not there; what `Engine::asked` throws, broken among it
+    // when the process that opened the document has ended.
+    Task<std::vector<Letter>> letters(std::size_t page) override {
+        if (!lettered_) throw Trouble{Kind::unsupported, "The renderer " + std::string{engine_->name()} + " gives no letters."};
+
+        if (page >= pages_.size()) throw Trouble{Kind::other, "No such page."};
+
+        Bytes payload = rendering::Writing().u32(number_).u32(static_cast<std::uint32_t>(page)).done();
+        const Frame got = co_await engine_->asked(Sort::letters, std::move(payload), engine_->limits().answer, generation_);
+
+        co_return engine_->believed(generation_, [&got] { return rendering::lettered(got.payload); });
+    }
+
 private:
     // Throws `Trouble` (other) for a region not within the page or of no area.
     static void within_page(const Region& region) {
@@ -928,6 +940,7 @@ private:
     std::uint32_t number_;
     std::uint64_t generation_;
     std::vector<Page> pages_;
+    bool lettered_;
 };
 
 // The adapter of `Renderer` on a program that speaks the protocol.
@@ -973,7 +986,7 @@ public:
             throw;
         }
 
-        co_return std::make_shared<Opened>(engine_, number, generation, std::move(pages));
+        co_return std::make_shared<Opened>(engine_, number, generation, std::move(pages), (hello.abilities & rendering::letters) != 0);
     }
 
 private:
@@ -1207,11 +1220,11 @@ private:
 };
 
 // A document of the scripted renderer: its pages, each rendered in one tone, the number of the
-// page.
+// page, and their letters when it was given any.
 class Played final : public Document {
 public:
-    // The pages `pages`.
-    explicit Played(std::vector<Page> pages) : pages_(std::move(pages)) {}
+    // The pages `pages` with the letters `letters`, page by page.
+    Played(std::vector<Page> pages, std::vector<std::vector<Letter>> letters) : pages_(std::move(pages)), letters_(std::move(letters)) {}
 
     // The pages.
     [[nodiscard]] const std::vector<Page>& pages() const override { return pages_; }
@@ -1223,6 +1236,17 @@ public:
 
         sized(size);
         co_return toned(size, static_cast<std::uint8_t>(page));
+    }
+
+    // The letters of the page `page`, as the renderer was given them (none for a page it was given
+    // none of). Throws `Trouble`: unsupported when it was given no letters, other for a page that
+    // is not there.
+    Task<std::vector<Letter>> letters(std::size_t page) override {
+        if (letters_.empty()) throw Trouble{Kind::unsupported, "The scripted renderer gives no letters."};
+
+        if (page >= pages_.size()) throw Trouble{Kind::other, "No such page."};
+
+        co_return page < letters_.size() ? letters_[page] : std::vector<Letter>{};
     }
 
     // A picture of `size` in the tone `tone`, opaque.
@@ -1237,6 +1261,7 @@ public:
 
 private:
     std::vector<Page> pages_;
+    std::vector<std::vector<Letter>> letters_;
 };
 
 // The place of PDFium in the chain of tal built without it: it takes PDF, and refuses every one
@@ -1516,6 +1541,16 @@ std::shared_ptr<Browser> webview2(Limits limits, Port<Processes> processes) {
     return std::make_shared<Showing>(std::move(program), limits, std::move(processes), "webview2");
 }
 
+// The letters of the page `page`, which a document gives only when it knows them: by default it
+// throws `Trouble` unsupported.
+Task<std::vector<Letter>> Document::letters(std::size_t page) {
+    (void)page;
+
+    throw Trouble{Kind::unsupported, "The document gives no letters."};
+
+    co_return std::vector<Letter>{};
+}
+
 // The renderers built into tal, as a chain called "tal": PDFium when tal is built with it
 // (TAL_PDFIUM), otherwise a link that takes PDF only to say that the program has no engine for it.
 std::shared_ptr<Renderer> Renderer::builtin() {
@@ -1548,15 +1583,15 @@ ScriptedRenderer::ScriptedRenderer(std::vector<Page> given) : pages(std::move(gi
 // Whether it takes the document: any.
 bool ScriptedRenderer::takes(std::span<const std::byte>) const { return true; }
 
-// A document of the scripted pages, whatever `from` holds, counted in `opening`; the documents are
-// locked by `password` when it is not empty. Throws `Trouble` denied for another password than
-// that.
+// A document of the scripted pages and their letters, whatever `from` holds, counted in `opening`;
+// the documents are locked by `password` when it is not empty. Throws `Trouble` denied for another
+// password than that.
 Task<std::shared_ptr<Document>> ScriptedRenderer::opened(std::shared_ptr<meta::Reader>, std::string given) {
     ++opening;
 
     if (given != password) throw rendering::locked(given.empty());
 
-    co_return std::make_shared<Played>(pages);
+    co_return std::make_shared<Played>(pages, letters);
 }
 
 // A view of `address` at `size`, kept in `addresses` and `ways`. Throws `Trouble` other for a

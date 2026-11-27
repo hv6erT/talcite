@@ -44,6 +44,7 @@ struct Style {
     Sides padding;
     Sides margin;
     bool shadow = false;
+    bool veil = false;
 
     friend bool operator==(const Style&, const Style&) = default;
 };

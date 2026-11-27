@@ -356,11 +356,11 @@ Split::Split(Axis along, int gap) : axis(*this, Effect::layout, along), gap_(std
             return;
         }
 
-        Spot here = what.at;
+        const std::optional<Spot> here = local(what.screen);
 
-        for (const Node* at = &what.target(); at != nullptr && at != this; at = at->parent()) here = Spot{here.x + at->area().at.x, here.y + at->area().at.y};
+        if (!here) return;
 
-        const int at = along_of(here);
+        const int at = along_of(*here);
 
         if (dragging_) {
             if (what.press != Press::move) return;

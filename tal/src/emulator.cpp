@@ -191,7 +191,7 @@ bool vacant(const Line& one) { return std::all_of(one.cells.begin(), one.cells.e
 
 // A place carried through a new layout: the row and column, and whether the cursor waited there for
 // a wrap.
-struct Carried {
+struct Carriage {
     std::size_t row = 0;
     int column = 0;
     bool waiting = false;
@@ -210,7 +210,7 @@ public:
     // given, going on to the next row when it does not fit; a wide character with one cell left
     // leaves that cell as room. On rows of one cell a wide character becomes a space. The place
     // where it starts.
-    Carried put(const Cell& cell, const Cell* half) {
+    Carriage put(const Cell& cell, const Cell* half) {
         const int much = half != nullptr && wide_ >= 2 ? 2 : 1;
 
         if (column_ + much > wide_) {
@@ -219,7 +219,7 @@ public:
             next();
         }
 
-        const Carried made{rows_.size(), column_, false};
+        const Carriage made{rows_.size(), column_, false};
 
         if (half != nullptr && much == 1) {
             row_.cells[static_cast<std::size_t>(column_)] = Cell{" ", cell.look, 0, cell.link};
@@ -237,7 +237,7 @@ public:
     // The place `beyond` cells past the text put so far, over blanks, with the rows up to it. A
     // place at the end of a row is its last column, waiting for a wrap, as the cursor waits after a
     // row it filled; no row is begun for it.
-    Carried past(std::size_t beyond) {
+    Carriage past(std::size_t beyond) {
         const auto wide = static_cast<std::size_t>(wide_);
         std::size_t total = static_cast<std::size_t>(column_) + beyond;
 
@@ -246,14 +246,14 @@ public:
 
             column_ = wide_;
 
-            return Carried{rows_.size(), wide_ - 1, true};
+            return Carriage{rows_.size(), wide_ - 1, true};
         }
 
         for (; total >= wide; total -= wide) next();
 
         column_ = static_cast<int>(total);
 
-        return Carried{rows_.size(), column_, false};
+        return Carriage{rows_.size(), column_, false};
     }
 
     // Ends the line: the row being filled is finished and goes on in no other.
@@ -1659,15 +1659,15 @@ void Emulator::Held::heightened(int high) {
 void Emulator::Held::reflowed(Size given) {
     const bool own = !modes.alternate;
     const std::size_t start = history.size();
-    std::vector<Carried> places{{start + static_cast<std::size_t>(own ? y : primary_saved.y), own ? x : primary_saved.x, own ? pending : primary_saved.pending},
+    std::vector<Carriage> places{{start + static_cast<std::size_t>(own ? y : primary_saved.y), own ? x : primary_saved.x, own ? pending : primary_saved.pending},
                               {start + static_cast<std::size_t>(primary_saved.y), primary_saved.x, primary_saved.pending},
                               {start, 0, false}};
     const std::uint64_t base = dropped;
     const bool prompted = prompt && *prompt >= base && *prompt - base < start + primary.size();
 
-    if (prompted) places.push_back(Carried{static_cast<std::size_t>(*prompt - base), 0, false});
+    if (prompted) places.push_back(Carriage{static_cast<std::size_t>(*prompt - base), 0, false});
 
-    std::vector<Carried> moved(places.size());
+    std::vector<Carriage> moved(places.size());
     Flow flow{given.wide};
     std::deque<Packed> old = std::move(history);
 
@@ -1684,7 +1684,7 @@ void Emulator::Held::reflowed(Size given) {
         bool waiting = false;
     };
 
-    const auto settled = [&](const Wanted& one, Carried got) {
+    const auto settled = [&](const Wanted& one, Carriage got) {
         if (one.waiting) {
             if (got.column >= given.wide - 1) {
                 got.column = given.wide - 1;
@@ -1722,11 +1722,11 @@ void Emulator::Held::reflowed(Size given) {
                 if (one.cells[cell].cluster.empty()) continue;
 
                 const bool two = wide(one.cells[cell]) && cell + 1 < end && one.cells[cell + 1].cluster.empty();
-                const Carried got = flow.put(one.cells[cell], two ? &one.cells[cell + 1] : nullptr);
+                const Carriage got = flow.put(one.cells[cell], two ? &one.cells[cell + 1] : nullptr);
 
                 for (const Wanted& each : wanted) {
                     if (each.index == index) settled(each, got);
-                    else if (two && each.index == index + 1) settled(each, Carried{got.row, given.wide >= 2 ? got.column + 1 : got.column, false});
+                    else if (two && each.index == index + 1) settled(each, Carriage{got.row, given.wide >= 2 ? got.column + 1 : got.column, false});
                 }
             }
         }
@@ -1781,9 +1781,9 @@ void Emulator::Held::reflowed(Size given) {
 
     primary.resize(high, blank(given.wide));
 
-    const auto row = [&](const Carried& one) { return static_cast<int>(std::min<std::size_t>(one.row >= from ? one.row - from : 0, high - 1)); };
-    const auto column = [&](const Carried& one) { return std::clamp(one.column, 0, given.wide - 1); };
-    const Carried& saved_place = own ? moved[1] : moved[0];
+    const auto row = [&](const Carriage& one) { return static_cast<int>(std::min<std::size_t>(one.row >= from ? one.row - from : 0, high - 1)); };
+    const auto column = [&](const Carriage& one) { return std::clamp(one.column, 0, given.wide - 1); };
+    const Carriage& saved_place = own ? moved[1] : moved[0];
 
     primary_saved.y = row(saved_place);
     primary_saved.x = column(saved_place);

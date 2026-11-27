@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "tal/bytes.hpp"
 #include "tal/docs.hpp"
 #include "tal/document.hpp"
 #include "tal/event.hpp"
@@ -29,6 +30,14 @@ struct Turned : Event {
     explicit Turned(std::size_t at) : page(at) {}
 
     std::size_t page;
+};
+
+struct Light {
+    std::size_t page = 0;
+    docs::Region region;
+    bool current = false;
+
+    friend bool operator==(const Light&, const Light&) = default;
 };
 
 class Leaves : public Scrollable {
@@ -58,6 +67,10 @@ public:
     [[nodiscard]] std::uint64_t held() const { return held_; }
 
     [[nodiscard]] bool busy() const;
+
+    [[nodiscard]] const std::vector<Light>& lights() const { return lights_; }
+
+    void lights(std::vector<Light> given);
 
     [[nodiscard]] std::size_t extent() const override { return extent_; }
 
@@ -138,6 +151,8 @@ private:
 
     void wanted(const std::vector<Key>& visible, const std::vector<Key>& ahead);
 
+    void lit(std::size_t page, std::uint32_t wide, std::uint32_t high, Area part, Bytes& rgba) const;
+
     void pump();
 
     void kept(const Key& key, media::Pixels pixels);
@@ -168,6 +183,7 @@ private:
     std::vector<Key> pinned_;
     std::set<Key> flying_;
     std::map<std::size_t, std::string> failed_;
+    std::vector<Light> lights_;
     std::optional<Scope> scope_;
     Timer refresh_;
     Hooks hooks_;

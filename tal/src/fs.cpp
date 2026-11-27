@@ -227,6 +227,30 @@ Task<void> File::flush() const {
     return [](std::shared_ptr<Opened> held) -> Task<void> { co_await opened(held)->flush(); }(held_);
 }
 
+// Throws `what` into the trash as `remove` does, not knowing where it went (`kept` empty): an
+// adapter whose trash gives entries back says so itself.
+Task<Trashed> Files::trash(const Path& what) {
+    return [](Files& files, Path given) -> Task<Trashed> {
+        Task<void> removing = files.remove(given, Removing{true, true});
+
+        co_await std::move(removing);
+
+        co_return Trashed{std::move(given), {}};
+    }(*this, what);
+}
+
+// Gives an entry back from the trash: refused as unsupported, unless the adapter keeps a trash
+// that gives entries back.
+Task<void> Files::restore(const Trashed& one, Conflict how) {
+    (void)how;
+
+    return [](Path from) -> Task<void> {
+        throw Trouble{Kind::unsupported, "There is no trash here to restore from.", from.text()};
+
+        co_return;
+    }(one.from);
+}
+
 // Lists a folder through the default adapter.
 Task<std::vector<Entry>> list(const Path& folder) {
     return through([folder](Files& files) { return files.list(folder); });
@@ -275,6 +299,16 @@ Task<void> copy(const Path& from, const Path& to, Copying how) {
 // Removes an entry through the default adapter.
 Task<void> remove(const Path& what, Removing how) {
     return through([what, how](Files& files) { return files.remove(what, how); });
+}
+
+// Throws an entry into the trash through the default adapter, telling where it went.
+Task<Trashed> trash(const Path& what) {
+    return through([what](Files& files) { return files.trash(what); });
+}
+
+// Gives an entry back from the trash through the default adapter.
+Task<void> restore(const Trashed& one, Conflict how) {
+    return through([one, how](Files& files) { return files.restore(one, how); });
 }
 
 // Changes the attributes or the time of an entry through the default adapter.

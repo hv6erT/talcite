@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <deque>
+#include <iterator>
 #include <map>
 #include <string>
 #include <type_traits>
@@ -20,14 +21,24 @@ namespace {
 // The most links followed while resolving one path, as the systems limit it.
 constexpr int most_links = 40;
 
-// One entry of the memory: a file with its bytes, a folder, or a link with its target.
+// One entry of the memory: a file with its bytes, a folder, or a link with its target; when it was
+// changed last and when it was made.
 struct Node {
     Type type = Type::file;
     Bytes data;
     std::chrono::system_clock::time_point modified;
+    std::chrono::system_clock::time_point created;
     Attributes attributes;
     Path target;
     std::uint16_t rights = 0644;
+};
+
+// An entry in the trash of the memory: where it was, where the trash keeps it, and its nodes with
+// their keys below the entry's own ("" for the entry itself).
+struct Binned {
+    Path from;
+    Path kept;
+    std::vector<std::pair<std::string, Node>> nodes;
 };
 
 // A watch kept by the memory: the folder it watches, resolved, and whether below it too.
@@ -47,22 +58,6 @@ std::pair<Path, std::deque<std::string>> split(const Path& given) {
     }
 
     return {at, std::move(names)};
-}
-
-// The trouble of a path that is not there.
-Trouble missing(const Path& where) { return Trouble{Kind::missing, "There is no " + where.text() + ".", where.text()}; }
-
-// The trouble of a path that does not start at a root.
-Trouble relative(const Path& where) {
-    return Trouble{Kind::malformed, where.text() + " is not an absolute path.", where.text()};
-}
-
-// The trouble of an entry that is there already.
-Trouble existing(const Path& where) { return Trouble{Kind::exists, where.text() + " exists already.", where.text()}; }
-
-// The trouble of an entry of the wrong type for the operation.
-Trouble mistyped(const Path& where, std::string_view wanted) {
-    return Trouble{Kind::other, where.text() + " is not " + std::string{wanted} + ".", where.text()};
 }
 
 // Runs `work` when the task runs, so that the operation is as lazy as one on a disk.
@@ -87,6 +82,8 @@ struct Memory::State {
     std::map<std::string, Node, std::less<>> nodes;
     std::vector<std::weak_ptr<Watcher>> watchers;
     std::vector<Path> trash;
+    std::vector<Binned> bin;
+    std::size_t thrown_count = 0;
     std::vector<Change> made;
 
     // The node at a path, or none; roots have none.
@@ -111,7 +108,7 @@ struct Memory::State {
     // The path with its links resolved: every link on the way, and the last one too when `last`
     // is set. Every folder on the way must be there; the last name need not be.
     Path resolved(const Path& given, bool last) {
-        if (!given.absolute()) throw relative(given);
+        if (!given.absolute()) throw Trouble{Kind::malformed, given.text() + " is not an absolute path.", given.text()};
 
         auto [current, names] = split(given);
         int links = 0;
@@ -143,7 +140,7 @@ struct Memory::State {
                 continue;
             }
 
-            if (!final && !folder(next)) throw missing(given);
+            if (!final && !folder(next)) throw Trouble{Kind::missing, "There is no " + given.text() + ".", given.text()};
 
             current = next;
         }
@@ -153,11 +150,11 @@ struct Memory::State {
 
     // The resolved path for a new entry `given`: its folder resolved and there, its own name kept.
     Path placed(const Path& given) {
-        if (given.root()) throw existing(given);
+        if (given.root()) throw Trouble{Kind::exists, given.text() + " exists already.", given.text()};
 
         const Path folder_path = resolved(given.parent(), true);
 
-        if (!folder(folder_path)) throw missing(given.parent());
+        if (!folder(folder_path)) throw Trouble{Kind::missing, "There is no " + given.parent().text() + ".", given.parent().text()};
 
         return folder_path / given.name();
     }
@@ -181,6 +178,7 @@ struct Memory::State {
         made_entry.reach = node.type;
         made_entry.size = node.type == Type::file ? node.data.size() : 0;
         made_entry.modified = node.modified;
+        made_entry.created = node.created;
         made_entry.attributes = node.attributes;
         made_entry.rights = node.rights;
 
@@ -247,9 +245,9 @@ struct Memory::State {
     Path listed(const Path& given) {
         const Path actual = resolved(given, true);
 
-        if (!there(actual)) throw missing(given);
+        if (!there(actual)) throw Trouble{Kind::missing, "There is no " + given.text() + ".", given.text()};
 
-        if (!folder(actual)) throw mistyped(given, "a folder");
+        if (!folder(actual)) throw Trouble{Kind::other, given.text() + " is not a folder.", given.text()};
 
         return actual;
     }
@@ -257,6 +255,25 @@ struct Memory::State {
     // Takes away the resolved path and everything below it.
     void erased(const Path& top) {
         for (const std::string& one : subtree(top)) nodes.erase(one);
+    }
+
+    // Moves the entry at the resolved path `actual`, with all below it, into the trash of the
+    // memory, under a place of its own there (never a path of the memory's tree), which it gives.
+    Path thrown(const Path& actual) {
+        const Path kept = Path{"/.trash"} / std::to_string(++thrown_count) / actual.name();
+        const std::string top{actual.stored()};
+        Binned made{actual, kept, {}};
+
+        for (const std::string& one : subtree(actual)) {
+            auto node = nodes.extract(one);
+
+            made.nodes.emplace_back(one.substr(top.size()), std::move(node.mapped()));
+        }
+
+        bin.push_back(std::move(made));
+        trash.push_back(actual);
+
+        return kept;
     }
 
     // A free name for `taken` beside it: "name (2).ext", "name (3).ext" and so on.
@@ -276,7 +293,7 @@ struct Memory::State {
         if (!there(target)) return target;
 
         switch (how) {
-            case Conflict::fail: throw existing(target);
+            case Conflict::fail: throw Trouble{Kind::exists, target.text() + " exists already.", target.text()};
             case Conflict::skip: return std::nullopt;
             case Conflict::rename: return renamed(target);
             case Conflict::replace: break;
@@ -370,7 +387,7 @@ struct Memory::State::Handle : Opened {
     static Node& file(State& from, const Path& where) {
         Node* const node = from.at(where);
 
-        if (node == nullptr || node->type != Type::file) throw missing(where);
+        if (node == nullptr || node->type != Type::file) throw Trouble{Kind::missing, "There is no " + where.text() + ".", where.text()};
 
         return *node;
     }
@@ -420,11 +437,11 @@ Task<File> Memory::open(const Path& file, Mode how) {
         const Path actual = state.resolved(file, true);
         Node* const node = state.at(actual);
 
-        if (actual.root() || (node != nullptr && node->type != Type::file)) throw mistyped(file, "a file");
+        if (actual.root() || (node != nullptr && node->type != Type::file)) throw Trouble{Kind::other, file.text() + " is not a file.", file.text()};
 
-        if (node == nullptr && how == Mode::read) throw missing(file);
+        if (node == nullptr && how == Mode::read) throw Trouble{Kind::missing, "There is no " + file.text() + ".", file.text()};
 
-        if (node != nullptr && how == Mode::exclusive) throw existing(file);
+        if (node != nullptr && how == Mode::exclusive) throw Trouble{Kind::exists, file.text() + " exists already.", file.text()};
 
         if (node != nullptr && how != Mode::read && node->attributes.readonly)
             throw Trouble{Kind::denied, file.text() + " is read-only.", file.text()};
@@ -433,7 +450,7 @@ Task<File> Memory::open(const Path& file, Mode how) {
 
         if (node == nullptr) {
             where = state.placed(actual);
-            state.nodes[std::string{where.stored()}] = Node{Type::file, {}, state.now(), {}, {}};
+            state.nodes[std::string{where.stored()}] = Node{Type::file, {}, state.now(), state.now(), {}, {}};
             state.noted(Change::Kind::created, where);
         } else if (how == Mode::truncate) {
             node->data.clear();
@@ -473,7 +490,7 @@ Task<Entry> Memory::look(const Path& one) {
     return locked(state_, [one](State& state) {
         const Path actual = state.resolved(one, false);
 
-        if (!state.there(actual)) throw missing(one);
+        if (!state.there(actual)) throw Trouble{Kind::missing, "There is no " + one.text() + ".", one.text()};
 
         return state.entry(one, actual);
     });
@@ -485,9 +502,9 @@ Task<Bytes> Memory::read(const Path& file, Range part) {
         const Path actual = state.resolved(file, true);
         const Node* const node = state.at(actual);
 
-        if (!state.there(actual)) throw missing(file);
+        if (!state.there(actual)) throw Trouble{Kind::missing, "There is no " + file.text() + ".", file.text()};
 
-        if (node == nullptr || node->type != Type::file) throw mistyped(file, "a file");
+        if (node == nullptr || node->type != Type::file) throw Trouble{Kind::other, file.text() + " is not a file.", file.text()};
 
         const std::uint64_t size = node->data.size();
         const std::uint64_t from = std::min(part.from, size);
@@ -504,12 +521,12 @@ Task<void> Memory::write(const Path& file, Bytes what, Writing how) {
     return locked(state_, [file, what = std::move(what), how](State& state) mutable {
         const Path actual = state.resolved(file, true);
 
-        if (actual.root()) throw mistyped(file, "a file");
+        if (actual.root()) throw Trouble{Kind::other, file.text() + " is not a file.", file.text()};
 
         const Path target = state.placed(actual);
         Node* const old = state.at(target);
 
-        if (old != nullptr && old->type != Type::file) throw mistyped(file, "a file");
+        if (old != nullptr && old->type != Type::file) throw Trouble{Kind::other, file.text() + " is not a file.", file.text()};
 
         if (old != nullptr && old->attributes.readonly && how.conflict == Conflict::replace)
             throw Trouble{Kind::denied, file.text() + " is read-only.", file.text()};
@@ -528,7 +545,7 @@ Task<void> Memory::write(const Path& file, Bytes what, Writing how) {
 
         if (!into) return;
 
-        Node made{Type::file, std::move(what), state.now(), {}, {}};
+        Node made{Type::file, std::move(what), state.now(), state.now(), {}, {}};
 
         if (how.rights) made.rights = *how.rights;
 
@@ -540,7 +557,7 @@ Task<void> Memory::write(const Path& file, Bytes what, Writing how) {
 // Makes a folder and every missing folder on the way to it; one that is there already is fine.
 Task<void> Memory::make(const Path& folder) {
     return locked(state_, [folder](State& state) {
-        if (!folder.absolute()) throw relative(folder);
+        if (!folder.absolute()) throw Trouble{Kind::malformed, folder.text() + " is not an absolute path.", folder.text()};
 
         auto [current, names] = split(folder);
 
@@ -548,10 +565,10 @@ Task<void> Memory::make(const Path& folder) {
             const Path next = state.resolved(current / name, true);
 
             if (!state.there(next)) {
-                state.nodes[std::string{next.stored()}] = Node{Type::folder, {}, state.now(), {}, {}, 0755};
+                state.nodes[std::string{next.stored()}] = Node{Type::folder, {}, state.now(), state.now(), {}, {}, 0755};
                 state.noted(Change::Kind::created, next);
             } else if (!state.folder(next)) {
-                throw existing(next);
+                throw Trouble{Kind::exists, next.text() + " exists already.", next.text()};
             }
 
             current = next;
@@ -564,7 +581,7 @@ Task<void> Memory::move(const Path& from, const Path& to, Conflict how) {
     return locked(state_, [from, to, how](State& state) {
         const Path source = state.resolved(from, false);
 
-        if (!state.there(source)) throw missing(from);
+        if (!state.there(source)) throw Trouble{Kind::missing, "There is no " + from.text() + ".", from.text()};
 
         if (source.root()) throw Trouble{Kind::denied, from.text() + " cannot be moved.", from.text()};
 
@@ -594,19 +611,20 @@ Task<void> Memory::move(const Path& from, const Path& to, Conflict how) {
     });
 }
 
-// Copies an entry with all it holds, keeping times and attributes; a link at the top is followed,
-// links inside are copied as links. The progress counts bytes of files.
+// Copies an entry with all it holds, keeping the times of change and the attributes (every copy is
+// made now); a link at the top is followed, links inside are copied as links. The progress counts
+// bytes of files.
 Task<void> Memory::copy(const Path& from, const Path& to, Copying how) {
     return locked(state_, [from, to, how](State& state) {
         const Path source = state.resolved(from, true);
 
-        if (!state.there(source)) throw missing(from);
+        if (!state.there(source)) throw Trouble{Kind::missing, "There is no " + from.text() + ".", from.text()};
 
         if (source.root()) throw Trouble{Kind::denied, from.text() + " cannot be copied whole.", from.text()};
 
         const Path wanted = state.placed(to);
 
-        if (wanted == source) throw existing(to);
+        if (wanted == source) throw Trouble{Kind::exists, to.text() + " exists already.", to.text()};
 
         if (wanted.within(source)) throw Trouble{Kind::other, "A folder cannot go inside itself.", to.text()};
 
@@ -627,7 +645,9 @@ Task<void> Memory::copy(const Path& from, const Path& to, Copying how) {
         const std::string old{source.stored()};
 
         for (const std::string& one : all) {
-            const Node copied = state.nodes.at(one);
+            Node copied = state.nodes.at(one);
+
+            copied.created = state.now();
 
             state.nodes[std::string{into->stored()} + one.substr(old.size())] = copied;
 
@@ -643,18 +663,61 @@ Task<void> Memory::remove(const Path& what, Removing how) {
     return locked(state_, [what, how](State& state) {
         const Path actual = state.resolved(what, false);
 
-        if (!state.there(actual)) throw missing(what);
+        if (!state.there(actual)) throw Trouble{Kind::missing, "There is no " + what.text() + ".", what.text()};
 
         if (actual.root()) throw Trouble{Kind::denied, what.text() + " cannot be removed.", what.text()};
 
         if (!how.deep && state.folder(actual) && !state.children(actual).empty())
             throw Trouble{Kind::other, what.text() + " is not empty.", what.text()};
 
-        state.erased(actual);
-
-        if (how.trash) state.trash.push_back(actual);
+        if (how.trash) {
+            (void)state.thrown(actual);
+        } else {
+            state.erased(actual);
+        }
 
         state.noted(Change::Kind::removed, actual);
+    });
+}
+
+// Throws an entry with all it holds into the trash of the memory, telling where it went.
+Task<Trashed> Memory::trash(const Path& what) {
+    return locked(state_, [what](State& state) {
+        const Path actual = state.resolved(what, false);
+
+        if (!state.there(actual)) throw Trouble{Kind::missing, "There is no " + what.text() + ".", what.text()};
+
+        if (actual.root()) throw Trouble{Kind::denied, what.text() + " cannot be removed.", what.text()};
+
+        const Path kept = state.thrown(actual);
+
+        state.noted(Change::Kind::removed, actual);
+
+        return Trashed{actual, kept};
+    });
+}
+
+// Gives an entry back from the trash of the memory to where it was, by the conflict rule `how`
+// when the place is taken; the folder it was in must be there. An entry the trash does not hold is
+// missing.
+Task<void> Memory::restore(const Trashed& one, Conflict how) {
+    return locked(state_, [one, how](State& state) {
+        const auto found = std::find_if(state.bin.begin(), state.bin.end(), [&one](const Binned& binned) { return binned.kept == one.kept; });
+
+        if (found == state.bin.end()) throw Trouble{Kind::missing, one.kept.text() + " is not in the trash.", one.kept.text()};
+
+        const std::optional<Path> into = state.settled(state.placed(one.from), how);
+
+        if (!into) return;
+
+        for (auto& [below, node] : found->nodes) state.nodes.insert_or_assign(std::string{into->stored()} + below, std::move(node));
+
+        const auto listed = std::find(state.trash.rbegin(), state.trash.rend(), found->from);
+
+        if (listed != state.trash.rend()) state.trash.erase(std::next(listed).base());
+
+        state.bin.erase(found);
+        state.noted(Change::Kind::created, *into);
     });
 }
 
@@ -667,7 +730,7 @@ Task<void> Memory::change(const Path& what, Changing how) {
         if (node == nullptr) {
             if (actual.root()) throw Trouble{Kind::denied, what.text() + " cannot be changed.", what.text()};
 
-            throw missing(what);
+            throw Trouble{Kind::missing, "There is no " + what.text() + ".", what.text()};
         }
 
         if (how.attributes) node->attributes = *how.attributes;
@@ -686,9 +749,9 @@ Task<void> Memory::link(const Path& where, const Path& onto) {
     return locked(state_, [where, onto](State& state) {
         const Path actual = state.placed(where);
 
-        if (state.there(actual)) throw existing(where);
+        if (state.there(actual)) throw Trouble{Kind::exists, where.text() + " exists already.", where.text()};
 
-        state.nodes[std::string{actual.stored()}] = Node{Type::link, {}, state.now(), {}, onto, 0777};
+        state.nodes[std::string{actual.stored()}] = Node{Type::link, {}, state.now(), state.now(), {}, onto, 0777};
         state.noted(Change::Kind::created, actual);
     });
 }
@@ -698,7 +761,7 @@ Task<Path> Memory::canonical(const Path& one) {
     return locked(state_, [one](State& state) {
         const Path actual = state.resolved(one, true);
 
-        if (!state.there(actual)) throw missing(one);
+        if (!state.there(actual)) throw Trouble{Kind::missing, "There is no " + one.text() + ".", one.text()};
 
         return actual;
     });
@@ -707,7 +770,7 @@ Task<Path> Memory::canonical(const Path& one) {
 // The volume of a path: its root, holding as much as there is memory.
 Task<Volume> Memory::volume(const Path& one) {
     return locked(state_, [one](State&) {
-        if (!one.absolute()) throw relative(one);
+        if (!one.absolute()) throw Trouble{Kind::malformed, one.text() + " is not an absolute path.", one.text()};
 
         return Volume{split(one).first, "", "Memory", "memory", false, false, 0, 0};
     });
@@ -773,7 +836,7 @@ Watch Memory::watch(const Path& folder, bool deep) {
     return Watch{std::move(made)};
 }
 
-// The paths removed into the trash, oldest first.
+// The paths removed into the trash and not given back, oldest first.
 std::vector<Path> Memory::trashed() const {
     const std::lock_guard<std::mutex> kept{state_->guard};
 

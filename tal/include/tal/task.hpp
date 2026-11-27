@@ -46,7 +46,9 @@ public:
 
     [[nodiscard]] Executor& where() const { return *where_.load(); }
 
-    void moved(Executor& to) { where_.store(&to); }
+    [[nodiscard]] Loop* moved(Executor& to);
+
+    static void returned(Loop& home);
 
     [[nodiscard]] bool cancelled() const { return cancelled_.load(); }
 
@@ -78,6 +80,7 @@ private:
     std::mutex heeding_;
     Waking* heeded_ = nullptr;
     std::atomic<Executor*> where_;
+    Loop* home_ = nullptr;
     std::atomic<bool> cancelled_{false};
     std::atomic<int> state_{waiting};
     std::coroutine_handle<> root_;
@@ -334,10 +337,14 @@ struct Moving {
 
         mine->chain = chain;
         mine->handle = handle;
-        chain->moved(*to);
+
+        Loop* const back = chain->moved(*to);
+
         chain->suspended();
         mine->armed = true;
         to->post([held = mine] { held->fire(); });
+
+        if (back != nullptr) Chain::returned(*back);
     }
 
     void await_resume() const noexcept {}

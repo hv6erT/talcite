@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <set>
 #include <stdexcept>
@@ -31,6 +32,9 @@
 // pixels of a cell of 1 to 2 at the grain of the characters, as `Image` takes a cell it does not
 // know, so that a picture fills its cells exactly. A tile the engine fails to render shows its
 // trouble in place of the page, until the view moves and asks again.
+//
+// Lights (`lights`) mark parts of pages, as found text is marked: they are tinted into the pictures
+// as they are composed, so they show in pixels and in characters alike.
 namespace tal {
 
 namespace {
@@ -138,6 +142,18 @@ std::size_t Leaves::zooms() { return scales.size(); }
 
 // Whether a tile is still being rendered.
 bool Leaves::busy() const { return scope_.has_value() && scope_->busy(); }
+
+// Lights the parts `given` of the pages, the current one most: the pictures in the view are
+// composed again with them, under a colour that tints what is there as a marker would.
+void Leaves::lights(std::vector<Light> given) {
+    if (given == lights_) return;
+
+    lights_ = std::move(given);
+
+    for (auto& [page, shown] : shown_) shown.held = {};
+
+    scheduled();
+}
 
 // Shows page `which` (the last when there are fewer) from its top, telling `Scrolled` when the
 // view moved and `Turned` when it is another page than before.
@@ -615,11 +631,44 @@ std::optional<media::Pixels> Leaves::composed(std::size_t page, Area part) {
         }
     }
 
+    lit(page, keys.front().wide, keys.front().high, part, rgba);
+
     std::vector<media::Still> stills(1);
 
     stills.front().rgba = std::move(rgba);
 
     return media::Pixels{media::Size{wide, high}, std::move(stills)};
+}
+
+// Tints in `rgba`, the pixels of the cells `part` of page `page` of `wide` by `high` pixels, the
+// lights on that page: each pixel times the colour of the part "light" of the sheet (the current
+// light's in the state current), and where the sheet gives none, a marker's yellow and orange.
+void Leaves::lit(std::size_t page, std::uint32_t wide, std::uint32_t high, Area part, Bytes& rgba) const {
+    const auto left = static_cast<std::int64_t>(part.at.x) * step_.wide;
+    const auto top = static_cast<std::int64_t>(part.at.y) * step_.high;
+    const auto across = static_cast<std::int64_t>(part.size.wide) * step_.wide;
+    const auto down = static_cast<std::int64_t>(part.size.high) * step_.high;
+    const Color marker = look("light").paper.value_or(Color{255, 224, 102});
+    const Color current = look("light", States{State::current}).paper.value_or(Color{255, 153, 51});
+
+    for (const Light& light : lights_) {
+        if (light.page != page) continue;
+
+        const Color tint = light.current ? current : marker;
+        const auto from_x = std::max(static_cast<std::int64_t>(light.region.left * wide), left);
+        const auto to_x = std::min(static_cast<std::int64_t>(std::ceil((light.region.left + light.region.width) * wide)), left + across);
+        const auto from_y = std::max(static_cast<std::int64_t>(light.region.top * high), top);
+        const auto to_y = std::min(static_cast<std::int64_t>(std::ceil((light.region.top + light.region.height) * high)), top + down);
+
+        for (std::int64_t y = from_y; y < to_y; ++y)
+            for (std::int64_t x = from_x; x < to_x; ++x) {
+                std::byte* const at = rgba.data() + ((y - top) * across + (x - left)) * 4;
+
+                at[0] = std::byte{static_cast<std::uint8_t>(std::to_integer<unsigned>(at[0]) * tint.red / 255)};
+                at[1] = std::byte{static_cast<std::uint8_t>(std::to_integer<unsigned>(at[1]) * tint.green / 255)};
+                at[2] = std::byte{static_cast<std::uint8_t>(std::to_integer<unsigned>(at[2]) * tint.blue / 255)};
+            }
+    }
 }
 
 // The tiles to ask for: those of the view the cache lacks first, then those of the next view while

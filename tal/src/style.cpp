@@ -51,6 +51,7 @@ struct Partial {
     std::optional<Sides> padding;
     std::optional<Sides> margin;
     std::optional<bool> shadow;
+    std::optional<bool> veil;
 };
 
 // A rule of a sheet: its selector taken apart, its weight and what it says at each level.
@@ -302,6 +303,10 @@ Partial partial(const Value& one) {
             if (given.kind() != json::Kind::boolean) refused(given, "\"shadow\" is true or false");
 
             made.shadow = given.boolean();
+        } else if (name == "veil") {
+            if (given.kind() != json::Kind::boolean) refused(given, "\"veil\" is true or false");
+
+            made.veil = given.boolean();
         } else {
             refused(given, "unknown field \"" + name + "\"");
         }
@@ -462,6 +467,7 @@ void laid(Style& made, const Partial& over) {
     if (over.padding) made.padding = *over.padding;
     if (over.margin) made.margin = *over.margin;
     if (over.shadow) made.shadow = *over.shadow;
+    if (over.veil) made.veil = *over.veil;
 }
 
 }

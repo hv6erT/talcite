@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -9,11 +10,14 @@
 #include <vector>
 
 #include "tal/bytes.hpp"
+#include "tal/crypto.hpp"
 #include "tal/docs.hpp"
 #include "tal/document.hpp"
 #include "tal/executor.hpp"
+#include "tal/fs.hpp"
 #include "tal/leaves.hpp"
 #include "tal/meta.hpp"
+#include "tal/path.hpp"
 #include "tal/pixels.hpp"
 #include "tal/process.hpp"
 #include "tal/scene.hpp"
@@ -147,6 +151,22 @@ Bytes bulky() {
     one.object(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
     one.object(3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R >>");
     one.stream(4, "", "% " + std::string(3000000, 'x') + "\n1 0 0 rg 0 0 100 100 re f 0 0 1 rg 100 0 100 100 re f");
+    one.table(" /Root 1 0 R");
+
+    return one.bytes();
+}
+
+// A document of two pages of 200 by 100 points, the second turned by 90 degrees, each with "Hi" in
+// Helvetica of 20 points, set from 20 points from the left and 30 up.
+Bytes hi_pages() {
+    Assembly one{"1.7"};
+
+    one.object(1, "<< /Type /Catalog /Pages 2 0 R >>");
+    one.object(2, "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>");
+    one.object(3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << /Font << /F1 6 0 R >> >> /Contents 5 0 R >>");
+    one.object(4, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Rotate 90 /Resources << /Font << /F1 6 0 R >> >> /Contents 5 0 R >>");
+    one.stream(5, "", "BT /F1 20 Tf 20 30 Td (Hi) Tj ET");
+    one.object(6, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
     one.table(" /Root 1 0 R");
 
     return one.bytes();
@@ -428,13 +448,13 @@ TRIAL("PDFium: a stream larger than a block") {
     OUGHT(pixel(tal::wait(loop, document->rendered(0, Size{20, 10}, Region{})), 2, 5) == red);
 }
 
-// The program as any program may speak to it: it greets as PDFium that renders documents; reads a
-// document only by asking for blocks of at most 1 MiB, putting off every other frame meanwhile,
-// and taking a block only by the number of its read; answers a refused read or a block of another
-// length as broken, while opening or while rendering (and renders the page when asked again);
-// refuses a document number in use, a document it does not have, a page, a size or a region out of
-// range, a question of a shape it should not have, and pages; closes what it is asked to, known or
-// not; ends when its input does.
+// The program as any program may speak to it: it greets as PDFium that renders documents and tells
+// their letters; reads a document only by asking for blocks of at most 1 MiB, putting off every
+// other frame meanwhile, and taking a block only by the number of its read; answers a refused read
+// or a block of another length as broken, while opening or while rendering (and renders the page
+// when asked again); tells no letters of a page without text; refuses a document number in use, a
+// document it does not have, a page, a size or a region out of range, a question of a shape it
+// should not have, and pages; closes what it is asked to, known or not; ends when its input does.
 TRIAL("PDFium: the program spoken to directly") {
     using tal::rendering::Sort;
 
@@ -449,7 +469,7 @@ TRIAL("PDFium: the program spoken to directly") {
 
     SAME(greeting.version, std::uint32_t{2});
     OUGHT(greeting.engine.starts_with("PDFium 160."));
-    OUGHT(greeting.abilities == tal::rendering::documents);
+    OUGHT(greeting.abilities == (tal::rendering::documents | tal::rendering::letters));
 
     const Bytes document = bulky();
 
@@ -513,6 +533,16 @@ TRIAL("PDFium: the program spoken to directly") {
     SAME(troubled(raw.heard()), std::string{"other: A size of no pixels or over the ceiling."});
     raw.ask(Sort::render, 8, rendering_of(1, 0, 20, 10, Region{0.6, 0, 0.5, 1}));
     SAME(troubled(raw.heard()), std::string{"other: A region not within the page."});
+    raw.ask(Sort::letters, 19, tal::rendering::Writing().u32(1).u32(1).done());
+    SAME(troubled(raw.heard()), std::string{"other: No such page."});
+    raw.ask(Sort::letters, 20, tal::rendering::Writing().u32(1).u32(0).done());
+
+    const tal::rendering::Frame none = raw.served(document);
+
+    OUGHT(none.sort == Sort::done);
+    OUGHT(tal::rendering::lettered(none.payload).empty());
+    raw.ask(Sort::letters, 21, Bytes(3));
+    OUGHT(troubled(raw.heard()).starts_with("malformed: "));
     raw.ask(Sort::navigate, 9, tal::rendering::Writing().u32(1).text("file:///a").u8(0).u8(0).u32(1).u32(1).done());
     SAME(troubled(raw.heard()), std::string{"unsupported: PDFium shows no pages."});
 
@@ -538,7 +568,35 @@ TRIAL("PDFium: the program spoken to directly") {
     OUGHT(raw.heard().sort == Sort::done);
     raw.ask(Sort::render, 14, rendering_of(1, 0, 20, 10));
     SAME(troubled(raw.heard()), std::string{"missing: No such document."});
+    raw.ask(Sort::letters, 22, tal::rendering::Writing().u32(1).u32(0).done());
+    SAME(troubled(raw.heard()), std::string{"missing: No such document."});
     OUGHT(raw.closed() == (tal::Exit{tal::Exit::Ended::normal, 0, 0}));
+}
+
+// The letters of a page in the order of its text, each with its box on the page as it is shown,
+// the whole height of its font: "H" from 20 points of 200 across, from about 44 points down to
+// about 26 points up of 100; on the page turned by 90 degrees the boxes turn with it, "H" a tenth
+// down and from about 26 to 44 of 100 across, "i" under it. A page that is not there is refused.
+TRIAL("PDFium: the letters of a page, where they stand as it is shown") {
+    tal::Loop loop;
+    const auto document = opened(loop, engine(), hi_pages());
+    const std::vector<tal::docs::Letter> flat = tal::wait(loop, document->letters(0));
+
+    SAME(flat.size(), std::size_t{2});
+    OUGHT(flat[0].code == U'H' && flat[1].code == U'i');
+    OUGHT(std::abs(flat[0].box.left - 0.1) < 0.01);
+    OUGHT(flat[0].box.top > 0.5 && flat[0].box.top < 0.6);
+    OUGHT(flat[0].box.top + flat[0].box.height > 0.7 && flat[0].box.top + flat[0].box.height < 0.8);
+    OUGHT(flat[1].box.left >= flat[0].box.left + flat[0].box.width - 0.01);
+
+    const std::vector<tal::docs::Letter> turned = tal::wait(loop, document->letters(1));
+
+    SAME(turned.size(), std::size_t{2});
+    OUGHT(std::abs(turned[0].box.top - 0.1) < 0.01);
+    OUGHT(turned[0].box.left > 0.2 && turned[0].box.left < 0.3);
+    OUGHT(turned[0].box.left + turned[0].box.width > 0.4 && turned[0].box.left + turned[0].box.width < 0.5);
+    OUGHT(turned[1].box.top >= turned[0].box.top + turned[0].box.height - 0.01);
+    SAME(refusal([&] { (void)tal::wait(loop, document->letters(2)); }), std::string{"other: No such page."});
 }
 
 // Five hundred pages: all told, the last rendered. Documents open side by side in one process, and
@@ -606,6 +664,89 @@ TRIAL("PDFium: five hundred pages leafed through in tal-ui, within the limit") {
     OUGHT(leaves.held() <= *leaves.most);
     UNTIL(loop, !leaves.busy());
 }
+
+// The program run with `--licenses` writes the licenses it carries, PDFium's first, then those of
+// what it holds, each under its name, and ends.
+TRIAL("PDFium: the program writes the licenses it carries") {
+    tal::Loop loop;
+    tal::Command program;
+
+    program.program = tal::testing::mine().parent() / "tal-render-pdfium";
+    program.arguments = {"--licenses"};
+
+    const tal::Output ran = tal::wait(loop, tal::Process::run(program));
+    const std::string text = tal::text::of(ran.output);
+
+    SAME(ran.exit.code, 0);
+    OUGHT(text.starts_with("== PDFium ==\n\n"));
+    OUGHT(text.find("\n== freetype.txt ==\n\n") != std::string::npos);
+    OUGHT(text.find("\n== zlib.txt ==\n\n") != std::string::npos);
+}
+
+#ifdef _WIN32
+
+// On Windows the program unpacks the library it carries into the user's local data, into a folder
+// named by its SHA-256: a file there that someone changed is unpacked anew before it is loaded,
+// and the folders of other builds are cleared.
+TRIAL("PDFium: on Windows the library unpacked anew when its file differs, other builds cleared") {
+    tal::Loop loop;
+    const tal::Path builds = *tal::wait(loop, tal::fs::known(tal::fs::Known::cache)) / "tal" / "pdfium";
+
+    {
+        const auto document = opened(loop, engine(), bulky());
+
+        OUGHT(pixel(tal::wait(loop, document->rendered(0, Size{20, 10}, Region{})), 2, 5) == red);
+    }
+
+    std::optional<tal::Path> build;
+
+    for (const tal::fs::Entry& one : tal::wait(loop, tal::fs::list(builds)))
+        if (one.type == tal::fs::Type::folder) build = one.where;
+
+    OUGHT(build.has_value());
+
+    const tal::Path file = *build / "pdfium.dll";
+    const tal::Path stale = builds / "0000stale";
+
+    tal::wait(loop, tal::fs::make(stale));
+    tal::wait(loop, tal::fs::write(stale / "pdfium.dll", tal::bytes("an older build")));
+    SOON([&] {
+        try {
+            tal::wait(loop, tal::fs::write(file, tal::bytes("no library")));
+
+            return true;
+        } catch (const tal::Trouble&) {
+            return false;
+        }
+    }());
+
+    {
+        const auto document = opened(loop, engine(), bulky());
+
+        OUGHT(pixel(tal::wait(loop, document->rendered(0, Size{20, 10}, Region{})), 2, 5) == red);
+    }
+
+    const Bytes unpacked = tal::wait(loop, tal::fs::read(file));
+    std::string sum;
+
+    for (const std::byte one : tal::crypto::summed(tal::crypto::Sum::sha256, unpacked)) {
+        constexpr std::string_view digits = "0123456789abcdef";
+
+        sum.push_back(digits[std::to_integer<unsigned>(one) >> 4U]);
+        sum.push_back(digits[std::to_integer<unsigned>(one) & 0xFU]);
+    }
+
+    SAME(sum, std::string{build->name()});
+
+    bool cleared = true;
+
+    for (const tal::fs::Entry& one : tal::wait(loop, tal::fs::list(builds)))
+        if (one.where.name() == "0000stale") cleared = false;
+
+    OUGHT(cleared);
+}
+
+#endif
 
 #endif
 

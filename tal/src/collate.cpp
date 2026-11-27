@@ -4,10 +4,13 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "unicode.hpp"
 
 
 namespace tal::text {
@@ -1220,6 +1223,18 @@ char32_t small(char32_t one) {
     return found != nullptr ? found->lower : one;
 }
 
+// The capital of a small letter without marks: ASCII by hand, else the table's letter whose
+// lowercase form it is (only capitals without marks have a base letter as that form); the letter
+// itself when the table has none.
+char32_t capital(char32_t one) {
+    if (one >= U'a' && one <= U'z') return one - 32;
+
+    for (const Letter& letter : letters)
+        if (letter.lower == one) return letter.code;
+
+    return one;
+}
+
 // Whether a character counts as space or punctuation, which come before digits and letters: ASCII
 // other than letters and digits, the Latin-1 signs, general punctuation and that of CJK.
 bool spaced(char32_t one) {
@@ -1544,6 +1559,49 @@ std::strong_ordering Collation::compare(std::string_view one, std::string_view t
     const int order = key(one).compare(key(two));
 
     return order < 0 ? std::strong_ordering::less : order > 0 ? std::strong_ordering::greater : std::strong_ordering::equal;
+}
+
+
+// The text with each letter as its base letter, without its marks or its stroke, in its own case:
+// "ą" is "a", "Ł" is "L", "é" is "e"; a combining mark standing on its own (a text decomposed, as
+// macOS writes names) goes. A letter that is two (ß, æ), any other character and bytes that are not
+// UTF-8 stay as they are. A base letter that has no capital the table knows stays small.
+std::string unmarked(std::string_view utf8) {
+    std::string made;
+
+    made.reserve(utf8.size());
+
+    for (std::size_t at = 0; at < utf8.size();) {
+        const std::size_t from = at;
+        const std::optional<char32_t> one = decoded(utf8, at);
+
+        if (!one) {
+            made.append(utf8.substr(from, at - from));
+            continue;
+        }
+
+        if (unicode::mark(*one)) continue;
+
+        const char32_t low = small(*one);
+        char32_t base = 0;
+
+        for (const Struck& struck : strokes)
+            if (struck.letter == low) base = struck.base;
+
+        if (base == 0)
+            if (const Letter* found = entry(*one); found != nullptr) base = found->base;
+
+        if (base == 0) {
+            made.append(utf8.substr(from, at - from));
+            continue;
+        }
+
+        if (low != *one) base = capital(base);
+
+        encoded(made, base);
+    }
+
+    return made;
 }
 
 }

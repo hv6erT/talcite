@@ -37,6 +37,13 @@ struct Region {
     friend bool operator==(const Region&, const Region&) = default;
 };
 
+struct Letter {
+    char32_t code = 0;
+    Region box{0, 0, 0, 0};
+
+    friend bool operator==(const Letter&, const Letter&) = default;
+};
+
 class Document {
 public:
     Document() = default;
@@ -48,6 +55,8 @@ public:
     [[nodiscard]] virtual const std::vector<Page>& pages() const = 0;
 
     [[nodiscard]] virtual Task<media::Pixels> rendered(std::size_t page, media::Size size, Region region) = 0;
+
+    [[nodiscard]] virtual Task<std::vector<Letter>> letters(std::size_t page);
 };
 
 class Renderer : public Adapter {
@@ -249,6 +258,7 @@ public:
     [[nodiscard]] Task<std::shared_ptr<Document>> opened(std::shared_ptr<meta::Reader> from, std::string password) override;
 
     std::vector<Page> pages;
+    std::vector<std::vector<Letter>> letters;
     std::string password;
     std::size_t opening = 0;
 };

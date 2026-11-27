@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <type_traits>
+#include <typeindex>
 #include <utility>
 #include <vector>
 
@@ -120,6 +121,39 @@ struct DropEvent : Event {
     std::string text;
 };
 
+class Carried {
+public:
+    Carried() = default;
+
+    virtual ~Carried() = default;
+
+    Carried(const Carried&) = delete;
+    Carried& operator=(const Carried&) = delete;
+
+    virtual void landed(bool taken);
+};
+
+struct DragOver : Event {
+    DragOver(std::shared_ptr<Carried> held, Spot screened) : carried(std::move(held)), screen(screened) {}
+
+    void accept(Node& by) {
+        taker = &by;
+        take();
+    }
+
+    std::shared_ptr<Carried> carried;
+    Spot at;
+    Spot screen;
+    Node* taker = nullptr;
+};
+
+struct Dropped : Event {
+    Dropped(std::shared_ptr<Carried> held, Spot point) : carried(std::move(held)), at(point) {}
+
+    std::shared_ptr<Carried> carried;
+    Spot at;
+};
+
 struct WindowFocused : Event {};
 
 struct WindowBlurred : Event {};
@@ -196,6 +230,7 @@ public:
 private:
     friend class Node;
     friend class Action;
+    friend class Bell;
     friend class Model;
     friend class Hunks;
     friend class Text;
@@ -213,6 +248,27 @@ public:
 
 private:
     std::vector<Hook> held_;
+};
+
+class Bell {
+public:
+    Bell() = default;
+
+    Bell(const Bell&) = delete;
+    Bell& operator=(const Bell&) = delete;
+
+    template <typename E>
+        requires std::derived_from<E, Event>
+    [[nodiscard]] Hook on(Fn<E> what) {
+        return hooked(typeid(E), std::make_shared<detail::Typed<E>>(std::move(what)));
+    }
+
+    void ring(Event& one) const;
+
+private:
+    [[nodiscard]] Hook hooked(std::type_index type, std::shared_ptr<detail::Slot> slot);
+
+    std::vector<std::pair<std::type_index, std::shared_ptr<detail::Slot>>> slots_;
 };
 
 }

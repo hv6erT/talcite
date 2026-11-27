@@ -221,6 +221,61 @@ TRIAL("Events: a hook that goes takes its handler with it, also while the event 
     SAME(earlier, 2);
 }
 
+// A bell, which stands in no tree, calls the handlers of an event's kind in the order they came,
+// and none of another kind; one that takes the event ends it; a handler whose hook went, even
+// while the bell rings, is called no more, and one added while it rings waits for the next ring.
+TRIAL("Bell: the handlers of a kind, taking, and hooks that go") {
+    struct Rung : tal::Event {
+        explicit Rung(int given) : value(given) {}
+
+        int value = 0;
+    };
+
+    struct Other : tal::Event {};
+
+    tal::Bell bell;
+    std::vector<int> heard;
+    Hook late;
+    Hook third;
+    Hook first = bell.on<Rung>([&](Rung& what) {
+        heard.push_back(what.value);
+        third = Hook{};
+        late = bell.on<Rung>([&heard](Rung& again) { heard.push_back(again.value * 100); });
+    });
+    const Hook second = bell.on<Rung>([&heard](Rung& what) {
+        heard.push_back(what.value * 10);
+
+        if (what.value == 3) what.take();
+    });
+
+    third = bell.on<Rung>([&heard](Rung& what) { heard.push_back(what.value * 1000); });
+
+    Rung one{1};
+    Other other;
+
+    bell.ring(one);
+    bell.ring(other);
+
+    SAME(heard, (std::vector<int>{1, 10}));
+
+    first = Hook{};
+    late = Hook{};
+
+    Rung two{2};
+
+    bell.ring(two);
+
+    SAME(heard, (std::vector<int>{1, 10, 20}));
+
+    Rung three{3};
+    const Hook after = bell.on<Rung>([&heard](Rung& what) { heard.push_back(what.value * 7); });
+
+    bell.ring(three);
+
+    OUGHT(three.taken());
+    SAME(heard, (std::vector<int>{1, 10, 20, 30}));
+}
+
 TRIAL("Focus: Tab and Shift+Tab go through the nodes that take it in tree order, round the end") {
     Stage stage;
     std::vector<std::string> told;

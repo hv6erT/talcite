@@ -7,6 +7,8 @@
 #include <map>
 #include <mutex>
 #include <sstream>
+#include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -58,6 +60,70 @@ using namespace core;
 
 namespace core {
 
+// A path starting with two slashes is a network path by definition. Asking the system about the
+// kind of a UNC root is unreliable, and two things depend on this answer at once: the chunk size
+// and whether notifications can be trusted. The check by definition is more certain.
+[[maybe_unused]] [[nodiscard]] bool unc_at(const path& where) {
+    const auto named = where.native();
+
+    if (named.size() < 2) return false;
+
+    using Letter = path::value_type;
+
+    const auto slashed = [](Letter one) {
+        return one == static_cast<Letter>('\\') || one == static_cast<Letter>('/');
+    };
+
+    return slashed(named[0]) && slashed(named[1]);
+}
+
+// The length of the \\server head of a path on a network share, 0 for any other path. The
+// standard library of MinGW does not take \\server for a root name: to it such a path has only a
+// root directory, so `absolute` puts it on the current drive and `lexically_normal` folds the two
+// slashes into one, and every call then lands in C:\server. So the head is cut off by hand and
+// only the rest is given to the library. Elsewhere two slashes are no network path.
+[[nodiscard]] std::size_t server_head([[maybe_unused]] const path& where) {
+#ifdef _WIN32
+    const std::wstring& named = where.native();
+
+    if (!unc_at(where) || named.size() < 3 || named[2] == L'\\' || named[2] == L'/') return 0;
+
+    const std::size_t end = named.find_first_of(L"\\/", 2);
+
+    return end == std::wstring::npos ? named.size() : end;
+#else
+    return 0;
+#endif
+}
+
+// The path made absolute: as it is when it already is or lies on a network share (`server_head`),
+// otherwise against the current folder.
+[[nodiscard]] path absolute_of(const path& where) {
+    if (where.is_absolute() || server_head(where) > 0) return where;
+
+    std::error_code ignored;
+
+    return stood::absolute(where, ignored);
+}
+
+// The path absolute and without dots or doubled separators. On a network share the \\server head
+// stays, with backslashes, and only the rest is tidied (`server_head`).
+[[nodiscard]] path whole_of(const path& where) {
+    const path made = absolute_of(where);
+
+#ifdef _WIN32
+    if (const std::size_t head = server_head(made); head > 0) {
+        std::wstring tidied = made.native().substr(0, head);
+
+        std::replace(tidied.begin(), tidied.end(), L'/', L'\\');
+
+        return path{tidied + path{made.native().substr(head)}.lexically_normal().native()};
+    }
+#endif
+
+    return made.lexically_normal();
+}
+
 // An entry the system cannot follow exists all the same. `std::filesystem::exists` follows a
 // reparse point, and when it meets a tag it does not know, it reports "not there". This is what a
 // Unix socket file looks like on Windows: it is in place, GetFileAttributesW sees it, DeleteFile
@@ -72,19 +138,31 @@ namespace core {
 // follows them and fails too, which is the answer we expect from `exists`.
 #ifdef _WIN32
 
+// Whether `whole`, an absolute path, is the root of a volume: a drive (C:\) or a network share
+// (\\server\share), with a separator after it or without.
+bool volume_root(const path& whole) {
+    const std::size_t head = server_head(whole);
+    const path rest = head == 0 ? whole.relative_path() : path{whole.native().substr(head)}.relative_path();
+    std::size_t names = 0;
+
+    for (const path& one : rest)
+        if (!one.empty()) ++names;
+
+    return names == (head == 0 ? 0U : 1U);
+}
+
 // A path too long for `std::filesystem`. In a program without longPathAware in its manifest (the
 // tests, any program on the library that lacks it) or on a system without LongPathsEnabled, MSVC
 // calls the system without the \\?\ prefix, and beyond 260 characters the system answers "no such
 // path", without an error. `exists` and `kind` would then say "not there" about a file that is
 // there, and a write with a collision policy would take it for a free spot. For such paths we ask
 // ourselves, with the prefix; shorter ones are left alone. The limit of 248 is the directory limit,
-// lower than the file one.
+// lower than the file one. A root (C:\, \\server\share\) we ask ourselves too: the standard library
+// of MinGW reads it through _wstat, which does not know a root behind the prefix.
 DWORD attributes_beyond(const path& where) {
-    std::error_code ignored;
+    const path whole = absolute_of(where);
 
-    const path whole = where.is_absolute() ? where : stood::absolute(where, ignored);
-
-    if (whole.native().size() < MAX_PATH - 12) return INVALID_FILE_ATTRIBUTES;
+    if (whole.native().size() < MAX_PATH - 12 && !volume_root(whole)) return INVALID_FILE_ATTRIBUTES;
 
     return GetFileAttributesW(longly(where).c_str());
 }
@@ -313,6 +391,36 @@ Instant instant_of(const timespec& when) {
     return Instant{std::chrono::seconds{seconds} + std::chrono::nanoseconds{when.tv_nsec}};
 }
 
+// Asks about the entry `where` itself, not what a link points to, into `told`: on Linux by
+// `statx`, which also gives `born`, the time of birth, when the file system keeps it, and by
+// `lstat` on a kernel without `statx` (or elsewhere), which gives none. False when it cannot be
+// asked about.
+bool asked(const path& where, struct stat& told, std::optional<Instant>& born) {
+#ifdef __linux__
+    struct statx about {};
+
+    if (::statx(AT_FDCWD, where.c_str(), AT_SYMLINK_NOFOLLOW, STATX_BASIC_STATS | STATX_BTIME, &about) == 0) {
+        told.st_mode = about.stx_mode;
+        told.st_size = static_cast<off_t>(about.stx_size);
+        told.st_nlink = static_cast<nlink_t>(about.stx_nlink);
+        told.st_uid = about.stx_uid;
+        told.st_gid = about.stx_gid;
+        told.st_mtim = timespec{static_cast<time_t>(about.stx_mtime.tv_sec), static_cast<long>(about.stx_mtime.tv_nsec)};
+        told.st_atim = timespec{static_cast<time_t>(about.stx_atime.tv_sec), static_cast<long>(about.stx_atime.tv_nsec)};
+
+        if ((about.stx_mask & STATX_BTIME) != 0) born = instant_of(timespec{static_cast<time_t>(about.stx_btime.tv_sec), static_cast<long>(about.stx_btime.tv_nsec)});
+
+        return true;
+    }
+
+    if (errno != ENOSYS) return false;
+#else
+    (void)born;
+#endif
+
+    return ::lstat(where.c_str(), &told) == 0;
+}
+
 #endif
 
 // The write time straight from the system, without `std::filesystem`, which goes through the file
@@ -392,23 +500,6 @@ Space space_at(const path& where) {
     return Space{told.capacity, told.available};
 }
 
-// A path starting with two slashes is a network path by definition. Asking the system about the
-// kind of a UNC root is unreliable, and two things depend on this answer at once: the chunk size
-// and whether notifications can be trusted. The check by definition is more certain.
-[[maybe_unused]] [[nodiscard]] bool unc_at(const path& where) {
-    const auto named = where.native();
-
-    if (named.size() < 2) return false;
-
-    using Letter = path::value_type;
-
-    const auto slashed = [](Letter one) {
-        return one == static_cast<Letter>('\\') || one == static_cast<Letter>('/');
-    };
-
-    return slashed(named[0]) && slashed(named[1]);
-}
-
 #ifdef _WIN32
 
 // Windows breaks on paths longer than 260 characters unless they are given with the \\?\ prefix.
@@ -418,10 +509,7 @@ Space space_at(const path& where) {
 // system calls have to do it explicitly, and there are many of them: opening a file, attributes,
 // listing a directory and watching (`exists` and `kind`, see `attributes_beyond`).
 std::wstring longly(const path& where) {
-    std::error_code ignored;
-
-    const path whole =
-        (where.is_absolute() ? where : stood::absolute(where, ignored)).lexically_normal();
+    const path whole = whole_of(where);
 
     std::wstring made = whole.wstring();
 
@@ -446,14 +534,24 @@ std::wstring longly(const path& where) {
 // (`longly`): the standard library hands the path to the system as it is, and without the prefix
 // the system refuses anything longer than 260 characters unless the program's manifest and the
 // registry both allow long paths, which neither the tests nor every program on the library can
-// promise. Elsewhere it is the path itself. Every such call in the shared code of `fs` goes through
-// here, which a trial checks; an empty path stays empty, since the prefix would make it the current
-// folder.
+// promise. A path on a network share short enough to go without the prefix goes without it under
+// MinGW, whose standard library asks through _wstat64, which finds nothing behind \\?\UNC\ (seen
+// with a probe on a share: the plain form found the folder, the prefixed one did not). Elsewhere it
+// is the path itself. Every such call in the shared code of `fs` goes through here, which a trial
+// checks; an empty path stays empty, since the prefix would make it the current folder.
 path long_form(const path& where) {
 #ifdef _WIN32
     if (where.empty()) return where;
 
-    return path{longly(where)};
+    std::wstring made = longly(where);
+
+#ifdef __GLIBCXX__
+    constexpr std::wstring_view shared = L"\\\\?\\UNC\\";
+
+    if (made.rfind(shared, 0) == 0 && made.size() - shared.size() + 2 < MAX_PATH - 12) made = L"\\\\" + made.substr(shared.size());
+#endif
+
+    return path{made};
 #else
     return where;
 #endif
@@ -596,9 +694,7 @@ Mount mount_at(const path& where) {
 // The nearest existing path: the target of a copy usually does not exist yet, and we ask about its
 // medium.
 path present_at(const path& where) {
-    std::error_code ignored;
-
-    path made = where.is_absolute() ? where : stood::absolute(where, ignored);
+    path made = absolute_of(where);
 
     while (!made.empty() && !exists_at(made)) {
         const path up = made.parent_path();
@@ -824,6 +920,9 @@ Kind kinded(::mode_t mode) {
 // points to (`readonly` of a link to a read-only file must be true), while `rights` describe the
 // entry itself, so a symlink has its own lrwxrwxrwx.
 //
+// On Linux the one question is `statx`, which gives the time of birth besides, where the file
+// system keeps it; a kernel without `statx` is asked by `lstat`, and the entry has no birth.
+//
 // An entry that cannot be asked about comes back with `Kind::none`.
 Entry noted(const stood::directory_entry& one) {
     Entry made;
@@ -831,7 +930,7 @@ Entry noted(const stood::directory_entry& one) {
 
     struct stat told {};
 
-    if (::lstat(one.path().c_str(), &told) != 0) return made;
+    if (!asked(one.path(), told, made.created)) return made;
 
     made.kind = kinded(told.st_mode);
     made.reach = made.kind;
@@ -841,6 +940,7 @@ Entry noted(const stood::directory_entry& one) {
 #ifdef __APPLE__
     made.modified = instant_of(told.st_mtimespec);
     made.accessed = instant_of(told.st_atimespec);
+    made.created = instant_of(told.st_birthtimespec);
 #else
     made.modified = instant_of(told.st_mtim);
     made.accessed = instant_of(told.st_atim);
@@ -1008,6 +1108,8 @@ Entry noted(const WIN32_FIND_DATAW& told, const path& here) {
     made.modified = instant_of(told.ftLastWriteTime);
     made.accessed = instant_of(told.ftLastAccessTime);
 
+    if (told.ftCreationTime.dwHighDateTime != 0 || told.ftCreationTime.dwLowDateTime != 0) made.created = instant_of(told.ftCreationTime);
+
     made.attributes.hidden = (told.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN) != 0;
     made.attributes.readonly = (told.dwFileAttributes & FILE_ATTRIBUTE_READONLY) != 0;
     made.attributes.system = (told.dwFileAttributes & FILE_ATTRIBUTE_SYSTEM) != 0;
@@ -1050,6 +1152,46 @@ Entry noted(const WIN32_FIND_DATAW& told, const path& here) {
     return made;
 }
 
+// The pattern that finds every entry of the directory `where`: its long form and "\\*", the
+// separator not doubled after a root's own (\\?\C:\\* finds nothing, the prefix turning off the
+// system's cleaning up of the path).
+std::wstring patterned(const path& where) {
+    std::wstring made = longly(where);
+
+    if (made.empty() || made.back() != L'\\') made += L'\\';
+
+    return made + L'*';
+}
+
+// The root of a volume (`volume_root`), which has no entry of its own: its attributes and times
+// from the system, the entry itself `where`. Anything else that cannot be found is not there:
+// `Kind::none`.
+Entry rooted(const path& where) {
+    WIN32_FILE_ATTRIBUTE_DATA about{};
+    const path whole = absolute_of(where);
+
+    if (!volume_root(whole) || GetFileAttributesExW(longly(where).c_str(), GetFileExInfoStandard, &about) == 0) {
+        Entry none;
+
+        none.where = where;
+
+        return none;
+    }
+
+    WIN32_FIND_DATAW like{};
+
+    like.dwFileAttributes = about.dwFileAttributes;
+    like.ftCreationTime = about.ftCreationTime;
+    like.ftLastAccessTime = about.ftLastAccessTime;
+    like.ftLastWriteTime = about.ftLastWriteTime;
+
+    Entry made = noted(like, where);
+
+    made.where = where;
+
+    return made;
+}
+
 // The entries of one directory, without "." and "..". `quiet` turns a directory that cannot be
 // opened into an empty list instead of an error, for walking a tree.
 std::vector<Entry> found_in(const path& where, bool quiet) {
@@ -1058,7 +1200,7 @@ std::vector<Entry> found_in(const path& where, bool quiet) {
     WIN32_FIND_DATAW told{};
 
     const HANDLE looking =
-        FindFirstFileExW((longly(where) + L"\\*").c_str(), FindExInfoBasic, &told,
+        FindFirstFileExW(patterned(where).c_str(), FindExInfoBasic, &told,
                          FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
 
     if (looking == INVALID_HANDLE_VALUE) {
@@ -1092,21 +1234,16 @@ std::vector<Entry> found_in(const path& where, bool quiet) {
 
 // One entry: the FIND_DATA of the entry itself, as in a listing, plus the link count from an open
 // handle. A listing does not have it, because it would cost opening every file; for one entry it is
-// one open, and without it a "write beside and rename" does not know it would break a hard link. An
-// entry that does not exist does not exist here either: it comes back with `Kind::none`.
+// one open, and without it a "write beside and rename" does not know it would break a hard link. A
+// root has no entry of its own to find (`rooted`). An entry that does not exist does not exist here
+// either: it comes back with `Kind::none`.
 Entry entry_at(const path& where) {
     WIN32_FIND_DATAW told{};
 
     const HANDLE looking = FindFirstFileExW(longly(where).c_str(), FindExInfoBasic, &told,
                                             FindExSearchNameMatch, nullptr, 0);
 
-    if (looking == INVALID_HANDLE_VALUE) {
-        Entry none;
-
-        none.where = where;
-
-        return none;
-    }
+    if (looking == INVALID_HANDLE_VALUE) return rooted(where);
 
     FindClose(looking);
 
@@ -1329,8 +1466,8 @@ constexpr unsigned noreplace = 1U;
 bool respelled(const path& from, const path& to) {
     std::error_code trouble;
 
-    const path one = stood::absolute(from, trouble).lexically_normal();
-    const path two = stood::absolute(to, trouble).lexically_normal();
+    const path one = whole_of(from);
+    const path two = whole_of(to);
 
     const std::wstring left = one.filename().wstring();
     const std::wstring right = two.filename().wstring();
@@ -1506,10 +1643,8 @@ Push replaced(const path& from, const path& to) {
 // the entry is not asked: a file has no inside either, and asking would cost a look at every file
 // moved.
 bool within(const path& from, const path& to) {
-    std::error_code ignored;
-
-    const path whole = stood::absolute(from, ignored).lexically_normal();
-    const path aim = stood::absolute(to, ignored).lexically_normal();
+    const path whole = whole_of(from);
+    const path aim = whole_of(to);
 
     const auto [left, right] = std::mismatch(whole.begin(), whole.end(), aim.begin(), aim.end());
 
@@ -1530,8 +1665,7 @@ bool same_entry(const path& from, const path& to) {
 
     // The same path is the same entry. The name alone is not enough: a hard link in another
     // directory under the same name is a separate entry, and `rename` between links does nothing.
-    if (stood::absolute(from, trouble).lexically_normal() == stood::absolute(to, trouble).lexically_normal())
-        return true;
+    if (whole_of(from) == whole_of(to)) return true;
 
     for (const stood::directory_entry& one : stood::directory_iterator{to.parent_path(), trouble})
         if (one.path().filename() == to.filename()) return false;
@@ -1558,10 +1692,7 @@ bool recased(const path& from, const path& to) {
 
     if (left != one.size() || right != two.size()) return false;
 
-    std::error_code trouble;
-
-    return stood::absolute(from, trouble).lexically_normal().parent_path() ==
-           stood::absolute(to, trouble).lexically_normal().parent_path();
+    return whole_of(from).parent_path() == whole_of(to).parent_path();
 }
 
 // A case change that the server accepted silently and did not perform (Samba without case
@@ -2216,9 +2347,7 @@ void stamp_at(const path& where, Instant when) {
 // it as written.
 path canonical_at(const path& where) {
 #ifdef _WIN32
-    std::error_code ignored;
-
-    const path whole = (where.is_absolute() ? where : stood::absolute(where, ignored)).lexically_normal();
+    const path whole = whole_of(where);
 
     path rest;
 
@@ -2227,7 +2356,7 @@ path canonical_at(const path& where) {
 
         const path real = real_at(at, trouble);
 
-        if (!trouble) return rest.empty() ? real : (real / rest).lexically_normal();
+        if (!trouble) return rest.empty() ? real : whole_of(real / rest);
 
         if (at.parent_path() == at) break;
 

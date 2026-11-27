@@ -190,7 +190,10 @@ public:
 // it never had, after opening one), "long" (a change with a title over 64 KiB), "flag" (a change
 // with a flag of 2), "reason" (a refusal of no reason), "numbered" (a change with an id), "lose" (a
 // click loses the view),
-// "pages-only" (no documents), "scripts" and "network" (it can allow them); "open=<how>" for what
+// "pages-only" (no documents), "scripts" and "network" (it can allow them), "letters" (it tells
+// the letters of a page: one, "A" for the first page, "B" for the next, its box a tenth from the
+// left, a fifth down, three tenths wide and two fifths high; with "letters=outside", wider than
+// the page); "open=<how>" for what
 // an opening does: many (claims four billion pages), flat (a page of no width), greedy (asks for
 // more than a block); "render=<how>" for what a render does: hang, die, wide and tall (a picture
 // a pixel wider or higher than asked), short
@@ -215,6 +218,8 @@ struct Told {
     bool bad_reason = false;
     bool numbered = false;
     bool lose = false;
+    bool letters = false;
+    std::string lettering = "answer";
     std::string unavailable;
     std::string pidfile;
     std::string password;
@@ -239,6 +244,8 @@ struct Told {
             if (one == "reason") bad_reason = true;
             if (one == "numbered") numbered = true;
             if (one == "lose") lose = true;
+            if (one == "letters") letters = true;
+            if (one.starts_with("letters=")) lettering = one.substr(8);
             if (one.starts_with("unavailable=")) unavailable = one.substr(12);
             if (one.starts_with("pidfile=")) pidfile = one.substr(8);
             if (one.starts_with("password=")) password = one.substr(9);
@@ -324,7 +331,8 @@ Task<int> toy(Wire& wire, Told told) {
     hello.version = told.old ? 1 : tal::rendering::version;
     hello.engine = "toy";
     hello.abilities = static_cast<std::uint8_t>((told.documents ? tal::rendering::documents : 0) | tal::rendering::pages |
-                                                (told.scripts ? tal::rendering::scripts : 0) | (told.network ? tal::rendering::network : 0));
+                                                (told.scripts ? tal::rendering::scripts : 0) | (told.network ? tal::rendering::network : 0) |
+                                                (told.letters ? tal::rendering::letters : 0));
 
     if (told.early) co_await wire.sent(tal::rendering::framed(frame_of(Sort::done, 1, tal::rendering::greeted(hello))));
 
@@ -465,6 +473,13 @@ Task<int> toy(Wire& wire, Told told) {
             } else {
                 co_await wire.sent(tal::rendering::framed(frame_of(Sort::done, got->id, rendered_payload(page, size, left, width))));
             }
+        } else if (got->sort == Sort::letters) {
+            (void)from.u32();
+
+            const std::uint32_t page = from.u32();
+            const tal::docs::Letter one{static_cast<char32_t>(U'A' + page), Region{0.1, 0.2, told.lettering == "outside" ? 0.95 : 0.3, 0.4}};
+
+            co_await wire.sent(tal::rendering::framed(frame_of(Sort::done, got->id, tal::rendering::letters_with({one}))));
         } else if (got->sort == Sort::navigate) {
             const std::uint32_t number = from.u32();
 
@@ -1261,8 +1276,42 @@ TRIAL("Rendering: an engine let go kills its process") {
     UNTIL(bench.loop, toys.load() == 0);
 }
 
+// The letters of a page: asked of a process that claims them and read from its answer; refused
+// without asking for a page out of range or of a process that does not claim them; letters not
+// within their page break the protocol, and so does a count of letters the frame cannot hold,
+// before anything is made for them. The wire carries letters as they are; the question is named
+// "letters" where frames are told.
+TRIAL("Rendering: the letters of a page, asked only of a process that claims them") {
+    Bench bench;
+    const auto lettering = bench.renderer({"letters"});
+    const auto document = bench.opened(lettering, "pages:2");
+
+    OUGHT(tal::wait(bench.loop, document->letters(1)) == (std::vector<tal::docs::Letter>{{U'B', Region{0.1, 0.2, 0.3, 0.4}}}));
+    SAME(refusal([&] { (void)tal::wait(bench.loop, document->letters(2)); }), std::string{"other: No such page."});
+
+    const auto plain = bench.opened(bench.renderer(), "pages:1");
+
+    SAME(refusal([&] { (void)tal::wait(bench.loop, plain->letters(0)); }), std::string{"unsupported: The renderer toy gives no letters."});
+
+    const auto outside = bench.opened(bench.renderer({"letters", "letters=outside"}), "pages:1");
+
+    SAME(kind_of([&] { (void)tal::wait(bench.loop, outside->letters(0)); }), std::optional<Kind>{Kind::malformed});
+
+    const std::vector<tal::docs::Letter> sent{{U'ż', Region{0, 0, 1, 1}}, {U'\n', Region{0.5, 0.5, 0, 0}}};
+
+    OUGHT(tal::rendering::lettered(tal::rendering::letters_with(sent)) == sent);
+
+    SAME(tal::rendering::named(Sort::letters), std::string_view{"letters"});
+
+    for (const Bytes& wrong : {tal::rendering::Writing().u32(0xFFFFFFFF).done(), tal::rendering::Writing().u32(2).u32(65).done(), tal::rendering::Writing().u32(1).u32(0xD800).f64(0).f64(0).f64(0).f64(0).done(),
+                               tal::rendering::Writing().u32(1).u32(65).f64(0).f64(0).f64(-0.1).f64(0).done(),
+                               tal::rendering::Writing().u32(1).u32(65).f64(0.5).f64(0.9).f64(0.1).f64(0.2).done()})
+        SAME(kind_of([&] { (void)tal::rendering::lettered(wrong); }), std::optional<Kind>{Kind::malformed});
+}
+
 // The scripted adapters of the trials: pages in the tone of their number, a page at the size
-// asked, documents locked by a password, the addresses and ways a browser was asked for.
+// asked, documents locked by a password, the addresses and ways a browser was asked for, letters
+// as given (none for a page given none), and none at all when given none.
 TRIAL("Scripted renderer and browser") {
     tal::Loop loop;
     tal::docs::ScriptedRenderer renderer;
@@ -1273,14 +1322,24 @@ TRIAL("Scripted renderer and browser") {
     OUGHT(document->pages() == (std::vector<Page>{{612, 792}}));
     OUGHT(first_pixel(page) == (std::vector<int>{0, 0, 0, 255}));
     SAME(renderer.opening, std::size_t{1});
+    SAME(refusal([&] { (void)tal::wait(loop, document->letters(0)); }), std::string{"unsupported: The scripted renderer gives no letters."});
+
+    renderer.pages = {Page{612, 792}, Page{612, 792}};
+    renderer.letters = {{{U'a', Region{0, 0, 0.1, 0.1}}}};
+
+    const auto lettered = tal::wait(loop, renderer.opened(std::make_shared<tal::meta::Held>(Bytes{}), {}));
+
+    OUGHT(tal::wait(loop, lettered->letters(0)) == (std::vector<tal::docs::Letter>{{U'a', Region{0, 0, 0.1, 0.1}}}));
+    OUGHT(tal::wait(loop, lettered->letters(1)).empty());
+    SAME(refusal([&] { (void)tal::wait(loop, lettered->letters(2)); }), std::string{"other: No such page."});
 
     renderer.password = "secret";
     SAME(refusal([&] { (void)tal::wait(loop, renderer.opened(std::make_shared<tal::meta::Held>(Bytes{}), {})); }),
          std::string{"denied: The document needs a password."});
     SAME(refusal([&] { (void)tal::wait(loop, renderer.opened(std::make_shared<tal::meta::Held>(Bytes{}), "guess")); }),
          std::string{"denied: The password does not open the document."});
-    SAME(tal::wait(loop, renderer.opened(std::make_shared<tal::meta::Held>(Bytes{}), "secret"))->pages().size(), std::size_t{1});
-    SAME(renderer.opening, std::size_t{4});
+    SAME(tal::wait(loop, renderer.opened(std::make_shared<tal::meta::Held>(Bytes{}), "secret"))->pages().size(), std::size_t{2});
+    SAME(renderer.opening, std::size_t{5});
 
     const auto shown = tal::wait(loop, browser.opened("file:///b", Browsing{true, false}, Size{2, 1}));
 

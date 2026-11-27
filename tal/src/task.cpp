@@ -26,6 +26,27 @@ void Chain::rooted(std::coroutine_handle<> root, Work gone) {
     gone_ = std::move(gone);
 }
 
+// Moves the chain to `to`. A chain that leaves a loop for another executor is away from that loop,
+// its home, which then waits for it before it goes; a chain coming back home returns the loop,
+// which the caller tells the loop (`returned`) once the work that wakes the chain there is queued,
+// so that the loop cannot go between.
+Loop* Chain::moved(Executor& to) {
+    Executor* const from = where_.exchange(&to);
+
+    if (home_ == nullptr && from != &to)
+        if (auto* const loop = dynamic_cast<Loop*>(from); loop != nullptr) {
+            loop->left();
+            home_ = loop;
+        }
+
+    if (home_ != &to) return nullptr;
+
+    return std::exchange(home_, nullptr);
+}
+
+// Tells the loop `home` that a chain away from it came back, or ended or was destroyed away.
+void Chain::returned(Loop& home) { home.returned(); }
+
 // Starts the root on the chain's executor; a chain cancelled before it ran is destroyed instead.
 void Chain::start() { resume(root_); }
 
@@ -66,11 +87,13 @@ void Chain::resume(std::coroutine_handle<> leaf) {
     });
 }
 
-// The root ended on its own; whatever it held is let go.
+// The root ended on its own; whatever it held is let go, and a loop it was away from is told.
 void Chain::finished() {
     state_.store(ended);
 
     if (gone_) std::exchange(gone_, {})();
+
+    if (Loop* const back = std::exchange(home_, nullptr)) back->returned();
 }
 
 // Whether the chain is over: ended, or doomed and so never to run again.
@@ -114,11 +137,13 @@ struct Dooming {
 // down, without resuming any.
 void Chain::doom() { where().post(Dooming{shared_from_this()}); }
 
-// Destroys the root and lets go of what the chain held; once.
+// Destroys the root and lets go of what the chain held, then tells a loop it was away from; once.
 void Chain::destroyed() {
     if (root_) std::exchange(root_, {}).destroy();
 
     if (gone_) std::exchange(gone_, {})();
+
+    if (Loop* const back = std::exchange(home_, nullptr)) back->returned();
 }
 
 // Gives what wakes the chain out of a blocking call of the system when it is cancelled, or none

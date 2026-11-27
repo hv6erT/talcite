@@ -106,6 +106,8 @@ protected:
 private:
     [[nodiscard]] std::string hint() const;
 
+    [[nodiscard]] bool marking() const;
+
     Hooks hooks_;
 };
 
@@ -154,23 +156,38 @@ std::string Menu::Item::hint() const {
     return action->key() ? to_string(*action->key()) : std::string{};
 }
 
-// The text between a column on each side, and the hint two columns further.
+// Whether the menu it stands in (a position is only measured and drawn in one) has a position whose
+// action is on or off, so that every position leaves room for the mark.
+bool Menu::Item::marking() const {
+    for (const Node& one : parent()->children())
+        if (const auto* item = dynamic_cast<const Item*>(&one); item != nullptr && item->action != nullptr && item->action->checked()) return true;
+
+    return false;
+}
+
+// The text between a column on each side, and the hint two columns further; in a menu with an
+// action that is on or off, two columns more before the text for its mark (`marking`).
 Size Menu::Item::measure(Limits room) const {
     (void)room;
 
     const std::string aside = hint();
-    const int wide = text::width(shown(), rendering()) + 2;
+    const int wide = text::width(shown(), rendering()) + 2 + (marking() ? 2 : 0);
 
     return Size{aside.empty() ? wide : wide + 2 + text::width(aside, rendering()), 1};
 }
 
 // The text one column in, its letter in the look of the part "key" (none when disabled, since it
-// picks nothing), and the hint against the right edge, a column in.
+// picks nothing), and the hint against the right edge, a column in. In a menu with an action that
+// is on or off the text stands two columns further, and an action that is on has the glyph
+// `choice.dot` in the first of them.
 void Menu::Item::paint(Canvas& onto) const {
     const Look plain = look();
     const std::string aside = hint();
+    const bool marks = marking();
 
-    (void)spelled(onto, {1, 0}, shown(), enabled() ? letter() : std::nullopt, plain, look("key"), rendering());
+    if (marks && action != nullptr && action->checked().value_or(false)) (void)onto.put({1, 0}, glyph("choice.dot"), plain);
+
+    (void)spelled(onto, {marks ? 3 : 1, 0}, shown(), enabled() ? letter() : std::nullopt, plain, look("key"), rendering());
 
     if (!aside.empty()) (void)onto.put({onto.size().wide - 1 - text::width(aside, rendering()), 0}, aside, plain);
 }
@@ -986,6 +1003,17 @@ const std::string& Tabs::title(std::size_t which) const {
     if (which >= pages_.size()) throw std::out_of_range{"tal::Tabs::title: no such page"};
 
     return names_[which]->said;
+}
+
+// The page whose name stands at `screen`, a spot of the screen; none where no name shows.
+std::optional<std::size_t> Tabs::named_at(Spot screen) const {
+    for (std::size_t at = 0; at < names_.size(); ++at) {
+        const std::optional<Spot> here = names_[at]->local(screen);
+
+        if (here && here->x >= 0 && here->y >= 0 && here->x < names_[at]->area().size.wide && here->y < names_[at]->area().size.high) return at;
+    }
+
+    return std::nullopt;
 }
 
 // The page `which`. A page that does not stand throws std::out_of_range.

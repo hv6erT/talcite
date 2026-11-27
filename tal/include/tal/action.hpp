@@ -47,6 +47,10 @@ public:
 
     [[nodiscard]] std::optional<Key> key() const { return key_; }
 
+    void checked(std::optional<bool> on);
+
+    [[nodiscard]] std::optional<bool> checked() const { return checked_; }
+
     void enable(bool on);
 
     [[nodiscard]] bool enabled() const { return enabled_; }
@@ -69,6 +73,7 @@ private:
     std::string text_;
     std::optional<char32_t> letter_;
     std::optional<Key> key_;
+    std::optional<bool> checked_;
     bool enabled_ = true;
     std::vector<std::pair<std::type_index, std::shared_ptr<detail::Slot>>> slots_;
 };

@@ -120,15 +120,6 @@ std::string authority(const Url& one) {
     return made;
 }
 
-// The trouble of a broken protocol, saying `said`.
-Trouble malformed(std::string said) { return Trouble{Kind::malformed, std::move(said)}; }
-
-// The trouble of a limit passed, saying `said`.
-Trouble oversized(std::string said) { return Trouble{Kind::full, std::move(said)}; }
-
-// The trouble of a request that cannot be sent as given, saying `said`.
-Trouble misused(std::string said) { return Trouble{Kind::other, std::move(said)}; }
-
 // One connection: its stream and the bytes read from it but not used yet. `heard` says whether any
 // of the answer came, since an idle connection that failed before that was only closed by the
 // server meanwhile; `forwarded` marks plain HTTP through a proxy, with the proxy's `login`.
@@ -188,7 +179,7 @@ std::size_t found(const Bytes& in, std::string_view what) {
 Task<std::string> until(Wire wire, std::string_view mark, std::size_t most, std::chrono::milliseconds quiet, bool head) {
     for (;;) {
         if (const std::size_t at = found(wire->kept, mark); at != std::string::npos) {
-            if (at > most) throw head ? oversized("The head of the answer is too large.") : malformed("A line of the answer is too long.");
+            if (at > most) throw head ? Trouble{Kind::full, "The head of the answer is too large."} : Trouble{Kind::malformed, "A line of the answer is too long."};
 
             std::string made{reinterpret_cast<const char*>(wire->kept.data()), at};
 
@@ -197,9 +188,9 @@ Task<std::string> until(Wire wire, std::string_view mark, std::size_t most, std:
             co_return made;
         }
 
-        if (wire->kept.size() > most + mark.size()) throw head ? oversized("The head of the answer is too large.") : malformed("A line of the answer is too long.");
+        if (wire->kept.size() > most + mark.size()) throw head ? Trouble{Kind::full, "The head of the answer is too large."} : Trouble{Kind::malformed, "A line of the answer is too long."};
 
-        if (!co_await more(wire, quiet)) throw malformed("The connection ended in the middle of the answer.");
+        if (!co_await more(wire, quiet)) throw Trouble{Kind::malformed, "The connection ended in the middle of the answer."};
     }
 }
 
@@ -231,7 +222,7 @@ Task<void> poured(Sink& sink, Bytes part) {
         co_return;
     }
 
-    if (part.size() > sink.most || sink.memory.size() > sink.most - part.size()) throw oversized("The body of the answer is too large.");
+    if (part.size() > sink.most || sink.memory.size() > sink.most - part.size()) throw Trouble{Kind::full, "The body of the answer is too large."};
 
     if (sink.memory.empty()) sink.memory = std::move(part);
     else sink.memory.insert(sink.memory.end(), part.begin(), part.end());
@@ -252,7 +243,7 @@ Bytes taken_out(Line& line, std::uint64_t much) {
 // Exactly `much` bytes of the body, into `sink` as they come.
 Task<void> exact(Wire wire, std::uint64_t much, Sink& sink, std::chrono::milliseconds quiet) {
     while (much > 0) {
-        if (wire->kept.empty() && !co_await more(wire, quiet)) throw malformed("The connection ended in the middle of the body.");
+        if (wire->kept.empty() && !co_await more(wire, quiet)) throw Trouble{Kind::malformed, "The connection ended in the middle of the body."};
 
         Bytes part = taken_out(*wire, much);
 
@@ -277,7 +268,7 @@ std::uint64_t chunk_size(const std::string& line) {
     std::uint64_t made = 0;
     const auto [end, why] = std::from_chars(digits.data(), digits.data() + digits.size(), made, 16);
 
-    if (digits.empty() || why != std::errc{} || end != digits.data() + digits.size()) throw malformed("The size of a chunk is not a number.");
+    if (digits.empty() || why != std::errc{} || end != digits.data() + digits.size()) throw Trouble{Kind::malformed, "The size of a chunk is not a number."};
 
     return made;
 }
@@ -290,7 +281,7 @@ Task<void> chunked(Wire wire, Sink& sink, std::size_t most, std::chrono::millise
 
         if (much == 0) break;
 
-        if (!sink.spilling && (much > sink.most || sink.memory.size() > sink.most - much)) throw oversized("The body of the answer is too large.");
+        if (!sink.spilling && (much > sink.most || sink.memory.size() > sink.most - much)) throw Trouble{Kind::full, "The body of the answer is too large."};
 
         co_await exact(wire, much, sink, quiet);
 
@@ -304,7 +295,7 @@ Task<void> chunked(Wire wire, Sink& sink, std::size_t most, std::chrono::millise
 
         heard += line.size() + 2;
 
-        if (heard > most) throw oversized("The trailer of the answer is too large.");
+        if (heard > most) throw Trouble{Kind::full, "The trailer of the answer is too large."};
     }
 }
 
@@ -323,13 +314,13 @@ Head parsed(const std::string& head) {
     const std::string_view first = std::string_view{head}.substr(0, at);
 
     if (first.size() < 12 || first.substr(0, 7) != "HTTP/1." || (first[7] != '0' && first[7] != '1') || first[8] != ' ' || (first.size() > 12 && first[12] != ' '))
-        throw malformed("The status line is not HTTP/1.x.");
+        throw Trouble{Kind::malformed, "The status line is not HTTP/1.x."};
 
     made.eleven = first[7] == '1';
 
     const std::string_view code = first.substr(9, 3);
 
-    if (!std::all_of(code.begin(), code.end(), [](char one) { return one >= '0' && one <= '9'; }) || code[0] == '0') throw malformed("The status is not a number.");
+    if (!std::all_of(code.begin(), code.end(), [](char one) { return one >= '0' && one <= '9'; }) || code[0] == '0') throw Trouble{Kind::malformed, "The status is not a number."};
 
     made.status = (code[0] - '0') * 100 + (code[1] - '0') * 10 + (code[2] - '0');
 
@@ -342,9 +333,9 @@ Head parsed(const std::string& head) {
         const std::size_t colon = line.find(':');
 
         if (colon == std::string_view::npos || colon == 0 || !std::all_of(line.begin(), line.begin() + static_cast<std::ptrdiff_t>(colon), tokenish))
-            throw malformed("A line of the head is not a header.");
+            throw Trouble{Kind::malformed, "A line of the head is not a header."};
 
-        if (line.find_first_of(std::string_view{"\r\n\0", 3}) != std::string_view::npos) throw malformed("A header breaks its line.");
+        if (line.find_first_of(std::string_view{"\r\n\0", 3}) != std::string_view::npos) throw Trouble{Kind::malformed, "A header breaks its line."};
 
         made.headers.push_back(Header{std::string{line.substr(0, colon)}, std::string{trimmed(line.substr(colon + 1))}});
     }
@@ -403,14 +394,14 @@ Frame framed(const Head& head, std::string_view method, std::uint64_t most) {
         const auto [end, why] = std::from_chars(one.value.data(), one.value.data() + one.value.size(), made);
 
         if (why != std::errc{} || end != one.value.data() + one.value.size() || (size && *size != made))
-            throw malformed("The length of the content is not one number.");
+            throw Trouble{Kind::malformed, "The length of the content is not one number."};
 
         size = made;
     }
 
     if (!size) return {Framing::closing, 0};
 
-    if (*size > most) throw oversized("The body of the answer is too large.");
+    if (*size > most) throw Trouble{Kind::full, "The body of the answer is too large."};
 
     return {Framing::sized, *size};
 }
@@ -463,14 +454,14 @@ Bytes requested(const Request& request, const Line& line) {
 void checked(const Request& request) {
     if (request.url.host.empty() || request.url.port == 0 || request.url.target.empty() || request.url.target.front() != '/' ||
         !std::all_of(request.url.target.begin(), request.url.target.end(), visible))
-        throw misused("The request has no address.");
+        throw Trouble{Kind::other, "The request has no address."};
 
-    if (request.method.empty() || !std::all_of(request.method.begin(), request.method.end(), tokenish)) throw misused("The method is not a token.");
+    if (request.method.empty() || !std::all_of(request.method.begin(), request.method.end(), tokenish)) throw Trouble{Kind::other, "The method is not a token."};
 
     for (const Header& one : request.headers) {
-        if (one.name.empty() || !std::all_of(one.name.begin(), one.name.end(), tokenish)) throw misused("The name of a header is not a token.");
+        if (one.name.empty() || !std::all_of(one.name.begin(), one.name.end(), tokenish)) throw Trouble{Kind::other, "The name of a header is not a token."};
 
-        if (one.value.find_first_of(std::string_view{"\r\n\0", 3}) != std::string::npos) throw misused("The value of a header breaks its line.");
+        if (one.value.find_first_of(std::string_view{"\r\n\0", 3}) != std::string::npos) throw Trouble{Kind::other, "The value of a header breaks its line."};
     }
 }
 
@@ -855,7 +846,7 @@ Task<void> tunneled(Wire wire, Gateway gate, Url url, std::size_t head, std::chr
     if (!wire->kept.empty()) {
         wire->stream.close();
 
-        throw malformed("The proxy sent bytes before the server spoke.");
+        throw Trouble{Kind::malformed, "The proxy sent bytes before the server spoke."};
     }
 }
 
@@ -910,7 +901,7 @@ Task<Response> exchanged(Kept held, Request request, Wire wire, Spill* spill) {
     if (head.status >= 100 && head.status < 200) {
         head = parsed(co_await until(wire, "\r\n\r\n", held->limits.head, quiet, true));
 
-        if (head.status >= 100 && head.status < 200) throw malformed("Too many interim answers.");
+        if (head.status >= 100 && head.status < 200) throw Trouble{Kind::malformed, "Too many interim answers."};
     }
 
     Sink sink;
@@ -984,11 +975,11 @@ Task<Response> fetched(Kept held, Request request, Spill* spill) {
 
         if (!redirecting(got.status) || location == nullptr) co_return got;
 
-        if (hops >= held->limits.redirects) throw oversized("Too many redirects.");
+        if (hops >= held->limits.redirects) throw Trouble{Kind::full, "Too many redirects."};
 
         const std::optional<Url> next = joined(request.url, *location);
 
-        if (!next) throw malformed("The place of a redirect is not an address.");
+        if (!next) throw Trouble{Kind::malformed, "The place of a redirect is not an address."};
 
         if (request.url.secure && !next->secure) throw Trouble{Kind::denied, "A redirect leaves HTTPS for plain HTTP."};
 

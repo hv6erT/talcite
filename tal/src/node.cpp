@@ -344,6 +344,25 @@ void Node::capture() {
     if (document_ != nullptr) document_->captured_ = this;
 }
 
+// Begins carrying `carried` from the node: the document follows the pointer with it instead of
+// telling the mouse (`DragOver` to the nodes under it, `Dropped` to the one that takes it when the
+// button comes up; Esc gives up). Nothing outside a document; no load throws std::invalid_argument.
+void Node::dragged(std::shared_ptr<Carried> carried) {
+    if (carried == nullptr) throw std::invalid_argument{"tal::Node::dragged: nothing carried"};
+
+    if (document_ != nullptr) document_->began(std::move(carried));
+}
+
+// The spot `screen` of the screen counted from the node's corner; none while the node or one above
+// it is not placed.
+std::optional<Spot> Node::local(Spot screen) const {
+    const std::optional<Area> where = absolute();
+
+    if (!where) return std::nullopt;
+
+    return Spot{screen.x - where->at.x, screen.y - where->at.y};
+}
+
 // Sets the state `one` on or off; the node and everything under it is styled again.
 void Node::state(State one, bool on) {
     if (states_.has(one) == on) return;

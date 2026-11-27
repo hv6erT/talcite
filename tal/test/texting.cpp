@@ -499,6 +499,18 @@ TRIAL("Text: folded() and lowered() follow the simple mappings of Unicode") {
     SAME(text::trimmed("  \tpoirot \r\n"), std::string_view{"poirot"});
 }
 
+// Letters without their marks and strokes, in their own case, also where the marks stand apart
+// after the letter; letters that are two, other characters and broken bytes stay.
+TRIAL("Text: unmarked() gives the base letters") {
+    SAME(text::unmarked("Zażółć gęślą jaźń ŻÓŁW"), std::string{"Zazolc gesla jazn ZOLW"});
+    SAME(text::unmarked("Ærø Đuro Ħal Ŧ ı"), std::string{"Æro Duro Hal T i"});
+    SAME(text::unmarked("crème Ångström Ÿ ά Ά й Й"), std::string{"creme Angstrom Y α Α и И"});
+    SAME(text::unmarked("a\u0328e\u0301"), std::string{"ae"});
+    SAME(text::unmarked("ß æ × 1 Ж"), std::string{"ß æ × 1 Ж"});
+    SAME(text::unmarked("a\xff" "ą"), std::string{"a\xff" "a"});
+    SAME(text::unmarked(""), std::string{});
+}
+
 // The common order: a letter with marks stands with its base and after it when the rest is equal,
 // lowercase before uppercase, spaces and punctuation before digits, digits before letters.
 TRIAL("Text: collation, marks and case come after the letter, punctuation and digits before letters") {

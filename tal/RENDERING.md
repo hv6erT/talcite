@@ -42,6 +42,7 @@ and 8 bytes; `f64` is an IEEE 754 double in 8 bytes, little-endian, and always f
 | shot | 14 | program | a picture of a view |
 | resize | 15 | program | change the size of a view |
 | dismiss | 16 | program | close a view |
+| letters | 17 | program | the letters of a page of an open document |
 | block | 20 | program | bytes of a document, answering a read |
 | unread | 21 | program | a read that could not be answered |
 | go | 30 | program | take a view to an address, back, forward, again, or stop it |
@@ -51,10 +52,10 @@ and 8 bytes; `f64` is an IEEE 754 double in 8 bytes, little-endian, and always f
 | type | 34 | program | text typed into a view |
 | zoom | 35 | program | zoom a view |
 
-The two sides number their own questions independently: the program numbers open, render, close,
-navigate, shot, resize, dismiss, go, click, wheel, key, type and zoom; the process numbers its reads.
-What the process tells of its views unasked (changed, refused, lost) carries id 0 and is answered
-by nothing. An answer carries the id of the
+The two sides number their own questions independently: the program numbers open, render, letters,
+close, navigate, shot, resize, dismiss, go, click, wheel, key, type and zoom; the process numbers
+its reads. What the process tells of its views unasked (changed, refused, lost) carries id 0 and is
+answered by nothing. An answer carries the id of the
 question it answers. The program may ask several questions before the first is answered, and the
 process may answer them in any order.
 
@@ -72,6 +73,7 @@ The process speaks first, before it reads anything:
 | pages (navigate, shot, resize, dismiss) | 2 |
 | scripts in pages | 4 |
 | network in pages | 8 |
+| letters of the pages of documents | 16 |
 
 A process whose engine cannot work here (a library or a runtime missing) says so before its hello,
 and ends:
@@ -109,6 +111,15 @@ The process needs no access to any file, and should have none.
 
 The region is the part of the page to render, in fractions of the page's size: within [0, 1], with an
 area. The picture must have exactly the width and height asked.
+
+    letters: u32 document, u32 page (from 0)
+    done:    u32 count, then for each letter u32 code (a Unicode character), f64 left, f64 top,
+             f64 width, f64 height
+
+Only a process that claims letters is asked for them. The letters of a page come in the order of its
+text, spaces and line ends among them as the engine knows them; each box is where the letter stands,
+in fractions of the page as it is shown (turned by its rotation): within [0, 1], of a size of zero or
+more (a letter the engine adds, as a line end, may have none).
 
     close:  u32 document
     done:   empty

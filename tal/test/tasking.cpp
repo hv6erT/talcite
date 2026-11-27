@@ -40,6 +40,65 @@ struct Sentinel {
     Sentinel& operator=(const Sentinel&) = delete;
 };
 
+// Goes from the loop `home` to the pool, and on to the io pool when `hopping`, counts itself in
+// `gone` there and waits there for `let`, then comes back to `home` and counts itself in `back`;
+// its frame counts in `alive`.
+tal::Task<void> away(tal::Loop& home, tal::Pending<void> let, std::atomic<int>& gone, std::atomic<int>& back, std::atomic<int>& alive, bool hopping) {
+    const Sentinel frame{alive};
+
+    co_await tal::to(tal::pool());
+
+    if (hopping) co_await tal::to(tal::io());
+
+    ++gone;
+
+    co_await let.task();
+    co_await tal::to(home);
+
+    ++back;
+}
+
+// Goes from the loop `home` to the pool, counts itself in `gone` there and works there (holding its
+// thread) until `let`, then comes back to `home` and counts itself in `back`; its frame counts in
+// `alive`.
+tal::Task<void> busy(tal::Loop& home, const std::atomic<bool>& let, std::atomic<int>& gone, std::atomic<int>& back, std::atomic<int>& alive) {
+    const Sentinel frame{alive};
+
+    co_await tal::to(tal::pool());
+
+    ++gone;
+
+    while (!let.load()) std::this_thread::sleep_for(1ms);
+
+    co_await tal::to(home);
+
+    ++back;
+}
+
+// Goes to the pool, counts itself in `gone` there, waits there for `let` and ends there; its frame
+// counts in `alive`.
+tal::Task<void> ending(tal::Pending<void> let, std::atomic<int>& gone, std::atomic<int>& alive) {
+    const Sentinel frame{alive};
+
+    co_await tal::to(tal::pool());
+
+    ++gone;
+
+    co_await let.task();
+}
+
+// Goes to the pool, counts itself in `gone` there and waits there for `never`, which is never
+// settled; its frame counts in `alive`.
+tal::Task<void> stranded(tal::Pending<void> never, std::atomic<int>& gone, std::atomic<int>& alive) {
+    const Sentinel frame{alive};
+
+    co_await tal::to(tal::pool());
+
+    ++gone;
+
+    co_await never.task();
+}
+
 // Twice the value, after a hop through the loop.
 tal::Task<int> doubled(int value) {
     co_await tal::to(tal::loop());
@@ -591,4 +650,123 @@ TRIAL("Scope: scopes destroyed while their results arrive from other threads lea
     }
 
     UNTIL(loop, alive.load() == 0);
+}
+
+namespace {
+
+// Comes from the loop `first` through the pool to the loop `second`, which it counts in `visited`,
+// back to the pool, waits there for `let` and comes back to `first`, counting itself in `back`.
+tal::Task<void> visiting(tal::Loop& first, tal::Loop& second, tal::Pending<void> let, std::atomic<int>& visited, std::atomic<int>& back) {
+    co_await tal::to(tal::pool());
+    co_await tal::to(second);
+
+    ++visited;
+
+    co_await tal::to(tal::pool());
+    co_await let.task();
+    co_await tal::to(first);
+
+    ++back;
+}
+
+// A loop going while chains are away from it on the pools: one whose scope goes on ends on the
+// pool, two come back to the loop (one through the io pool) and end there, one cancelled while it
+// works on the pool comes back and is destroyed on the loop, two cancelled while they wait on the
+// pool are destroyed there. They are let go in an order that ends with the chain ending on the pool
+// (`ending_last`) or with one coming back. Afterwards all came back that should and no frame lives.
+void gone_with(bool ending_last) {
+    std::atomic<int> alive{0};
+    std::atomic<int> gone{0};
+    std::atomic<int> back{0};
+    std::vector<tal::Pending<void>> lets(4);
+    std::atomic<bool> let{false};
+    std::thread opener;
+    tal::Pending<void> never;
+
+    {
+        std::optional<tal::Scope> outer;
+        tal::Loop loop;
+
+        outer.emplace(loop);
+        outer->run(away(loop, lets[0], gone, back, alive, false));
+        outer->run(away(loop, lets[1], gone, back, alive, true));
+        outer->run(ending(lets[3], gone, alive));
+
+        tal::Scope inner{loop};
+
+        inner.run(away(loop, lets[2], gone, back, alive, false));
+        inner.run(stranded(never, gone, alive));
+        inner.run(busy(loop, let, gone, back, alive));
+
+        while (gone.load() < 6) (void)loop.turn(std::chrono::steady_clock::now() + 1ms);
+
+        SAME(alive.load(), 6);
+
+        opener = std::thread{[&lets, &let, ending_last] {
+            std::this_thread::sleep_for(50ms);
+
+            if (!ending_last) lets[3].settle();
+
+            let.store(true);
+            std::this_thread::sleep_for(20ms);
+
+            for (const std::size_t one : {2U, 0U, 1U}) lets[one].settle();
+
+            std::this_thread::sleep_for(20ms);
+
+            if (ending_last) lets[3].settle();
+        }};
+    }
+
+    opener.join();
+
+    SAME(back.load(), 2);
+    SAME(alive.load(), 0);
+}
+
+}
+
+// A loop that goes first waits for the chains away from it on the pools: they come back to it, or
+// end or are destroyed away, and none of them reaches the loop once it is gone; whichever comes
+// last, a return or an end on the pool, lets the loop go.
+TRIAL("Loop: going, it waits for the chains away on the pools, which come back or are destroyed") {
+    gone_with(false);
+    gone_with(true);
+}
+
+// A chain belongs to the loop it left first: another loop it passes through on the way goes without
+// waiting for it, and the chain still comes back to its own.
+TRIAL("Loop: a chain belongs to the loop it left first; another loop it passes through does not wait for it") {
+    std::atomic<int> visited{0};
+    std::atomic<int> back{0};
+    tal::Pending<void> let;
+    std::thread opener;
+
+    {
+        tal::Loop first;
+        tal::Scope scope{first};
+
+        {
+            tal::Loop second;
+
+            scope.run(visiting(first, second, let, visited, back));
+
+            while (visited.load() < 1) {
+                (void)first.turn(std::chrono::steady_clock::now() + 1ms);
+                (void)second.turn(std::chrono::steady_clock::now() + 1ms);
+            }
+        }
+
+        opener = std::thread{[&let] {
+            std::this_thread::sleep_for(20ms);
+            let.settle();
+        }};
+
+        while (back.load() < 1) (void)first.turn(std::chrono::steady_clock::now() + 1ms);
+    }
+
+    opener.join();
+
+    SAME(visited.load(), 1);
+    SAME(back.load(), 1);
 }

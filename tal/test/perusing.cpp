@@ -15,6 +15,7 @@
 #include "tal/leaves.hpp"
 #include "tal/pixels.hpp"
 #include "tal/scene.hpp"
+#include "tal/style.hpp"
 #include "tal/task.hpp"
 #include "tal/trouble.hpp"
 
@@ -802,3 +803,47 @@ TRIAL("Leaves: let go while tiles are being rendered") {
     SAME(booklet->asked.size(), std::size_t{2});
 }
 
+
+// Lights tint the parts of the pages they mark as a marker would, each band of a pixel times the
+// band of the light's colour, to the last pixel the light reaches: a marker's yellow, the current
+// light orange, unless the sheet gives the part "light" (and the light in the state current) a
+// colour of its own. What no light marks stays as it was; lights let go of leave the pages as they
+// were.
+TRIAL("Leaves: lights tint the parts of pages they mark") {
+    Shown shown{kitty()};
+
+    shown.settled();
+    shown.leaves.lights({tal::Light{0, Region{0.5, 0.25, 0.25, 0.125}}, tal::Light{0, Region{0, 0, 0.1, 0.05}, true}, tal::Light{1, Region{}}});
+    shown.settled();
+
+    const tal::media::Pixels* lit = shown.picture({0, 0});
+
+    OUGHT(lit != nullptr);
+    OUGHT(pixel(*lit, 700, 450) == (std::vector<int>{0, 175 * 224 / 255, 112 * 102 / 255, 255}));
+    OUGHT(pixel(*lit, 100, 60) == (std::vector<int>{0, 25 * 153 / 255, 15 * 51 / 255, 255}));
+    OUGHT(pixel(*lit, 300, 300) == (std::vector<int>{0, 75, 75, 255}));
+    OUGHT(pixel(*lit, 599, 450) == (std::vector<int>{0, 149, 112, 255}));
+    OUGHT(pixel(*lit, 899, 599) == (std::vector<int>{0, 224 * 224 / 255, 149 * 102 / 255, 255}));
+    OUGHT(pixel(*lit, 900, 450) == (std::vector<int>{0, 225, 112, 255}));
+    OUGHT(pixel(*lit, 700, 600) == (std::vector<int>{0, 175, 150, 255}));
+
+    shown.document.sheet(tal::StyleSheet::parsed(R"({"rules": [{"select": "leaves::light", "style": {"paper": "#80ff80"}},
+        {"select": "leaves:current::light", "style": {"paper": "#ff8080"}}], "glyphs": {}})"));
+    shown.leaves.lights({tal::Light{0, Region{0.5, 0.25, 0.25, 0.125}}, tal::Light{0, Region{0, 0, 0.1, 0.05}, true}});
+    shown.settled();
+
+    const tal::media::Pixels* sheeted = shown.picture({0, 0});
+
+    OUGHT(sheeted != nullptr);
+    OUGHT(pixel(*sheeted, 700, 450) == (std::vector<int>{0, 175, 112 * 128 / 255, 255}));
+    OUGHT(pixel(*sheeted, 100, 60) == (std::vector<int>{0, 25 * 128 / 255, 15 * 128 / 255, 255}));
+
+    shown.leaves.lights({});
+    shown.settled();
+
+    const tal::media::Pixels* plain = shown.picture({0, 0});
+
+    OUGHT(plain != nullptr);
+    OUGHT(pixel(*plain, 700, 450) == (std::vector<int>{0, 175, 112, 255}));
+    OUGHT(shown.leaves.lights().empty());
+}

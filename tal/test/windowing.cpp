@@ -221,6 +221,80 @@ TRIAL("Layers: a modal window keeps Tab and the mouse inside") {
     SAME(program.ran.front(), std::string{"Yes"});
 }
 
+// A loose window holds the keys and Esc closes it, as a modal one; a press of the mouse outside it
+// closes it, and the press goes on: the button beneath is clicked and takes the focus. A press
+// inside, or the pointer moving outside, leaves it open, and so does a modal window under the same
+// press outside. It stands with the modal windows, over the modeless ones and over a modal one
+// opened before it, and the focus comes back into it when a modal window over it closes.
+TRIAL("Layers: a loose window gives way to a press outside it") {
+    Program program;
+    auto loose = std::make_shared<Window>("Loose", Modal::loose);
+    Field& field = loose->children().add<Field>();
+
+    (void)program.layers->open(loose);
+    program.scene.wait(0ms);
+
+    OUGHT(field.focused());
+    OUGHT(loose->has_class("dialog"));
+
+    program.scene.press(Key{Code::tab});
+
+    OUGHT(field.focused());
+
+    program.scene.click(field);
+    program.scene.point({1, 0});
+
+    OUGHT(program.layers->top() == loose.get());
+
+    auto beside = std::make_shared<Window>("Beside");
+
+    (void)program.layers->open(beside);
+
+    OUGHT(program.layers->top() == loose.get());
+
+    auto over = std::make_shared<Window>("Over", Modal::yes);
+
+    (void)over->children().add<Field>();
+    (void)program.layers->open(over);
+    program.scene.wait(0ms);
+
+    OUGHT(program.document.confined() == over.get());
+
+    program.scene.press(Key{Code::escape});
+    program.scene.wait(0ms);
+
+    OUGHT(program.document.confined() == loose.get());
+    OUGHT(field.focused());
+
+    beside->close();
+    program.scene.click({1, 0});
+    program.scene.wait(0ms);
+
+    OUGHT(program.layers->top() == program.screen);
+    SAME(program.ran, (std::vector<std::string>{"Left"}));
+    OUGHT(program.first->focused());
+
+    (void)program.layers->open(loose);
+    program.scene.wait(0ms);
+    program.scene.press(Key{Code::escape});
+
+    OUGHT(program.layers->top() == program.screen);
+
+    auto modal = std::make_shared<Window>("Modal", Modal::yes);
+
+    (void)modal->children().add<Field>();
+    (void)program.layers->open(modal);
+    program.scene.wait(0ms);
+    program.scene.click({1, 0});
+
+    OUGHT(program.layers->top() == modal.get());
+    SAME(program.ran.size(), std::size_t{1});
+
+    (void)program.layers->open(loose);
+
+    OUGHT(program.layers->top() == loose.get());
+}
+
 // A node beneath a modal window that asks for the focus waits; it gets the focus when the window
 // closes, before the place the focus came from, the last one to ask winning.
 TRIAL("Layers: a request for the focus from beneath waits for the modal window to close") {
@@ -412,6 +486,50 @@ TRIAL("Form: its shadow dims the letters under it and survives their repaint") {
     SAME(program.scene.at({6, 1}).cluster, std::string{"Y"});
     OUGHT(program.scene.at({6, 1}).look.faint);
     OUGHT(program.scene.at({7, 1}).look.faint);
+}
+
+// A window whose style is a veil paints no ground of its own: the letters beneath keep showing, in
+// its look, and stay so when they are painted again; one that is not a veil hides them.
+TRIAL("Document: a veil keeps the letters beneath it, in its look") {
+    Program program{Size{30, 5}};
+    auto beneath = std::make_shared<Window>();
+
+    beneath->add_class("screen");
+    beneath->seat(Area{{6, 1}, {3, 1}});
+
+    Label& letters = beneath->children().add<Label>("LLL");
+
+    (void)program.layers->open(beneath);
+
+    auto veil = std::make_shared<Window>();
+    auto plain = std::make_shared<Window>();
+    auto solid = std::make_shared<Window>();
+
+    veil->add_class("veil");
+    veil->seat(Area{{6, 1}, {1, 1}});
+    plain->add_class("plain");
+    plain->seat(Area{{7, 1}, {1, 1}});
+    solid->add_class("solid");
+    solid->seat(Area{{8, 1}, {1, 1}});
+    program.document.sheet(tal::StyleSheet::parsed(R"({"rules": [{"select": "window.veil", "style": {"veil": true, "border": "none", "padding": 0, "under": true}},
+        {"select": "window.plain", "style": {"veil": true, "border": "none", "padding": 0}}, {"select": "window.solid", "style": {"border": "none", "padding": 0}}], "glyphs": {}})"));
+    (void)program.layers->open(veil);
+    (void)program.layers->open(plain);
+    (void)program.layers->open(solid);
+    program.scene.wait(0ms);
+
+    SAME(program.scene.at({6, 1}).cluster, std::string{"L"});
+    OUGHT(program.scene.at({6, 1}).look.under);
+    SAME(program.scene.at({7, 1}).cluster, std::string{"L"});
+    OUGHT(!program.scene.at({7, 1}).look.under);
+    SAME(program.scene.at({8, 1}).cluster, std::string{" "});
+
+    letters.text = "YYY";
+    program.scene.wait(0ms);
+
+    SAME(program.scene.at({6, 1}).cluster, std::string{"Y"});
+    OUGHT(program.scene.at({6, 1}).look.under);
+    SAME(program.scene.at({7, 1}).cluster, std::string{"Y"});
 }
 
 // A window wants its content and room for its title on the frame; a full one takes all the layers,
@@ -948,6 +1066,64 @@ TRIAL("Palette: actions sifted by letters in order, run by Enter or a double cli
 
     SAME(ran.back(), std::string{"Nowa karta"});
     OUGHT(layers.top() == nullptr);
+}
+
+// A palette kept and opened again shows what was typed until a command runs: Esc and a press
+// outside close it and keep the field, running a command empties it. On a screen 100 columns wide
+// its inside takes three fifths of the 94 columns left inside the frame (56), the frame two more.
+TRIAL("Palette: what was typed stays until a command runs, and it is wide") {
+    Scene scene{{.screen = {100, 20}}};
+    Document document{scene.time()};
+    Layers& layers = document.children().add<Layers>();
+    std::vector<std::string> ran;
+    Hooks heard;
+    auto copy = std::make_shared<Action>("Kopiuj do…");
+    auto move = std::make_shared<Action>("Przenieś do…");
+
+    heard.add(copy->on<Run>([&ran](Run&) { ran.emplace_back("copy"); }));
+    heard.add(move->on<Run>([&ran](Run&) { ran.emplace_back("move"); }));
+
+    scene.show(document);
+
+    auto palette = std::make_shared<tal::Palette>(std::vector<std::shared_ptr<Action>>{copy, move}, "Polecenia");
+    const auto opened = [&] {
+        (void)layers.open(palette);
+        scene.wait(0ms);
+    };
+
+    opened();
+
+    SAME(palette->area().size.wide, 58);
+
+    scene.type("prz");
+    scene.press(Key{Code::escape});
+    scene.wait(0ms);
+
+    OUGHT(layers.top() == nullptr);
+
+    opened();
+
+    OUGHT(row_of(scene, "prz", 20) >= 0);
+    OUGHT(row_of(scene, "Kopiuj", 20) < 0);
+
+    scene.click({0, 0});
+    scene.wait(0ms);
+
+    OUGHT(layers.top() == nullptr);
+
+    opened();
+
+    OUGHT(row_of(scene, "prz", 20) >= 0);
+
+    scene.press(Key{Code::enter});
+    scene.wait(0ms);
+
+    SAME(ran, (std::vector<std::string>{"move"}));
+
+    opened();
+
+    OUGHT(row_of(scene, "prz", 20) < 0);
+    OUGHT(row_of(scene, "Kopiuj do…", 20) >= 0);
 }
 
 // Among actions whose letters all match, a letter right after the one before counts for one, a

@@ -35,6 +35,16 @@ void Action::key(std::optional<Key> one) {
     altered();
 }
 
+// Makes the action one that is on or off (`true`, `false`), shown with a mark in a menu, or an
+// ordinary one again (none).
+void Action::checked(std::optional<bool> on) {
+    if (on == checked_) return;
+
+    checked_ = on;
+
+    altered();
+}
+
 // Enables or disables the action; a disabled one does nothing when run, and its views are disabled.
 void Action::enable(bool on) {
     if (on == enabled_) return;

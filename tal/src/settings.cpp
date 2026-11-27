@@ -20,7 +20,9 @@
 // value themselves; hence `changed`, and `reset` as "drop the deviation", not "write the default".
 // A setting is asked for by a handle with its type (`Setting`), which the generator of settings
 // makes from the built-in values, so a wrong road or a wrong type does not compile. The file holds
-// keys to services, so it is never readable by anyone but its owner, nor is its copy.
+// keys to services, so it is never readable by anyone but its owner, nor is its copy. Built-in
+// values with a whole number "version" give it to the file, which tells what wrote it: a file
+// without one is of version 0, and one above the built-in values' comes from a newer program.
 namespace tal {
 
 namespace {
@@ -44,6 +46,26 @@ std::vector<std::string_view> split(std::string_view road) {
 
         from = to + 1;
     }
+}
+
+// The version a document of settings is in: its member "version" when that is a whole number, 0
+// otherwise (files from before versions, and programs that do not count them).
+int version_of(const json::Value& document) {
+    const json::Value* found = document.kind() == json::Kind::object ? document.find("version") : nullptr;
+
+    if (found == nullptr || found->kind() != json::Kind::integer || found->integer() < 0 || found->integer() > std::numeric_limits<int>::max()) return 0;
+
+    return static_cast<int>(found->integer());
+}
+
+// The object `document` without its member "version", which is the file's and not a setting.
+json::Value unversioned(const json::Value& document) {
+    json::Value made = json::Value::object();
+
+    for (std::size_t at = 0; at < document.size(); ++at)
+        if (document.names()[at] != "version") made.put(document.names()[at], document.at(at));
+
+    return made;
 }
 
 // The value at `road` in `document`, or none when a step is missing or not an object.
@@ -288,7 +310,9 @@ Settings::~Settings() = default;
 // Starts over from the file: the deviations it holds replace those held now. The pool reads, and
 // the layer changes at once at the end, where the caller is. A missing file, or a folder in its
 // place, is a first run; a file that cannot be read or is not a JSON object is damaged (`damaged`),
-// and the settings run on the built-in values until the person repairs or restores it.
+// and the settings run on the built-in values until the person repairs or restores it. A file of a
+// version above the built-in values' one comes from a newer program (`newer`): what it holds is
+// read, but it is not written over.
 Task<void> Settings::read() {
     Executor& back = co_await detail::Here{};
 
@@ -313,21 +337,31 @@ Task<void> Settings::read() {
 
     co_await to(back);
 
-    mine_ = layer ? std::move(*layer) : json::Value::object();
+    newer_ = layer && version_of(*layer) > version_of(builtin_);
+    mine_ = layer ? unversioned(*layer) : json::Value::object();
     damaged_ = present && !layer;
 }
 
-// Writes the deviations, as they are at the call, to the file, which only its owner can read; the
-// writes go one after another. A damaged file stays as it is until the person decides, so writing
-// refuses: one typo in the file and a change of sorting would otherwise overwrite the person's
-// whole file, keys included.
+// Writes the deviations, as they are at the call, to the file, which only its owner can read, under
+// the version of the built-in values when they have one; the writes go one after another. A damaged
+// file stays as it is until the person decides, so writing refuses: one typo in the file and a
+// change of sorting would otherwise overwrite the person's whole file, keys included. A file of a
+// newer program stays too, since this one would drop what it does not know.
 Task<void> Settings::write() const {
     if (damaged_) return failing(std::make_exception_ptr(Trouble{Kind::refused, "The settings file is damaged and stays untouched.", where_.text()}));
+
+    if (newer_) return failing(std::make_exception_ptr(Trouble{Kind::refused, "The settings file comes from a newer version and stays untouched.", where_.text()}));
 
     Bytes bytes;
 
     try {
-        bytes = tal::bytes(json::written(mine_, true) + "\n");
+        json::Value whole = json::Value::object();
+
+        if (const int version = version_of(builtin_); version > 0) whole.put("version", json::Value{static_cast<std::int64_t>(version)});
+
+        for (std::size_t at = 0; at < mine_.size(); ++at) whole.put(mine_.names()[at], mine_.at(at));
+
+        bytes = tal::bytes(json::written(whole, true) + "\n");
     } catch (...) {
         return failing(std::current_exception());
     }
@@ -361,10 +395,11 @@ Task<void> Settings::repair() {
     co_await sheltered(where_, tal::bytes(given));
     co_await to(back);
 
-    mine_ = std::move(made);
+    newer_ = version_of(made) > version_of(builtin_);
+    mine_ = unversioned(made);
     damaged_ = false;
 
-    co_await write();
+    if (!newer_) co_await write();
 }
 
 // Starts again from the built-in values: the original stays beside the file (`.broken`), since the
@@ -378,6 +413,7 @@ Task<void> Settings::restore() {
 
     mine_ = json::Value::object();
     damaged_ = false;
+    newer_ = false;
 
     co_await write();
 }

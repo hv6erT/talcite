@@ -1,4 +1,4 @@
-#include "wording.hpp"
+#include "tal/wording.hpp"
 
 #include <algorithm>
 #include <map>

@@ -258,7 +258,7 @@ const Surface& Document::frame() {
 void Document::damaged(Area part) { damage::added(damage_, part, most_damaged); }
 
 // Styles `one` and everything under it that waits for a style. A new box lays the node out again,
-// a new look only paints it again.
+// a new look (or a veil coming or going) only paints it again.
 void Document::styled(Node& one) {
     if (!one.styled_) {
         const std::vector<std::vector<std::string>> classes = one.lineage();
@@ -273,7 +273,7 @@ void Document::styled(Node& one) {
 
             one.style_ = made;
             one.relayout();
-        } else if (made.look != one.style_.look) {
+        } else if (made != one.style_) {
             one.style_ = made;
             one.repaint();
         }
@@ -309,14 +309,19 @@ void Document::painted(Node& one, Spot origin, Area clip, Area part) {
 }
 
 // Paints `one`, standing at `box` on the screen, where it shows (`seen`): its background, border
-// and outline, its content, then its children.
+// and outline, its content, then its children. A node whose style is a veil has no background of
+// its own: what lies beneath it takes its look and keeps its letters (`Canvas::shade`).
 void Document::drawn(Node& one, Area box, Area seen, Area clip, Area part) {
     Canvas whole = surface_.canvas(seen).within(Area{{box.at.x - seen.at.x, box.at.y - seen.at.y}, box.size});
     const Style& style = one.style_;
     const Area all{{0, 0}, box.size};
     const int line = style.border == Border::none ? 0 : 1;
 
-    whole.fill(all, style.look);
+    if (style.veil) {
+        whole.shade(all, style.look);
+    } else {
+        whole.fill(all, style.look);
+    }
 
     if (line != 0) whole.frame(all, sheet_.lines(style.border, display_.unicode), style.look);
 
@@ -382,6 +387,12 @@ void Document::key(Key one) {
 
     changing();
 
+    if (carrying_ && one.code() == Code::escape && one.mods() == Mods{}) {
+        ended(false);
+
+        return;
+    }
+
     KeyEvent made{one};
 
     delivered(made, keyed());
@@ -407,7 +418,37 @@ void Document::mouse(Press press, MouseButton button, Spot screen, Mods mods, in
 void Document::moused(Press press, MouseButton button, Spot screen, Mods mods, int steps, Axis axis, std::chrono::steady_clock::time_point now, std::optional<Spot> pixel) {
     changing();
 
+    pointer_ = screen;
+
+    // While something is carried the pointer carries it: a move is over the nodes under it, the
+    // release drops it, and a press (whose release was lost) gives it up and goes on as a press.
+    // Nothing else of the mouse is told meanwhile, so no click comes of a drag.
+    if (carrying_) {
+        if (press == Press::move) {
+            over(screen);
+
+            return;
+        }
+
+        if (press == Press::up) {
+            ended(true);
+            captured_ = nullptr;
+            pressing_ = MouseButton::none;
+
+            return;
+        }
+
+        if (press != Press::down) return;
+
+        ended(false);
+    }
+
     if (press == Press::down) captured_ = nullptr;
+
+    // A loose window gives way to a press outside it: it closes, and the press goes on to what lies
+    // beneath, as though the window had not been there.
+    if (press == Press::down && confined_ != nullptr)
+        if (auto* loose = dynamic_cast<Window*>(confined_); loose != nullptr && loose->modal() == Modal::loose && !loose->holds(under(screen))) loose->close();
 
     Node& found = under(screen);
 
@@ -434,6 +475,65 @@ void Document::moused(Press press, MouseButton button, Spot screen, Mods mods, i
     if (press == Press::down || press == Press::up) clicked(press, button, screen, mods, now, pixel);
 
     if (curtain != nullptr && confined_ != curtain.get()) pressing_ = MouseButton::none;
+}
+
+// What is carried now, or none.
+std::shared_ptr<Carried> Document::carried() const { return carrying_ ? carrying_->carried : nullptr; }
+
+// Begins carrying `carried` (`Node::dragged`), at once over what lies under the pointer; the mouse
+// is no longer captured.
+void Document::began(std::shared_ptr<Carried> carried) {
+    carrying_ = Carrying{std::move(carried), {}};
+    captured_ = nullptr;
+
+    over(pointer_);
+}
+
+// The load carried over `screen`: `DragOver` goes to the deepest node there (to the confinement,
+// outside it), its spot counted from that node; the node whose hook accepts it is the taker, with
+// the state `drag` while it is, the one before losing it.
+void Document::over(Spot screen) {
+    Node& found = under(screen);
+    Node& below = confined_ != nullptr && !confined_->holds(found) ? *confined_ : found;
+    DragOver made{carrying_->carried, screen};
+
+    if (const std::optional<Area> where = below.absolute()) made.at = Spot{screen.x - where->at.x, screen.y - where->at.y};
+
+    delivered(made, below);
+
+    if (!carrying_) return;
+
+    const std::shared_ptr<Node> was = carrying_->taker.lock();
+
+    if (was.get() == made.taker) return;
+
+    if (was != nullptr) was->state(State::drag, false);
+
+    if (made.taker != nullptr) made.taker->state(State::drag, true);
+
+    carrying_->taker = made.taker != nullptr ? made.taker->weak_from_this() : std::weak_ptr<Node>{};
+}
+
+// The carrying ends: the taker loses the state `drag` and, when `dropping`, is told `Dropped`, its
+// spot counted from the taker; then the load hears how it landed (`Carried::landed`).
+void Document::ended(bool dropping) {
+    const Carrying held = std::move(*carrying_);
+
+    carrying_.reset();
+
+    const std::shared_ptr<Node> taker = held.taker.lock();
+
+    if (taker != nullptr) taker->state(State::drag, false);
+
+    if (taker != nullptr && dropping) {
+        Dropped made{held.carried, {}};
+
+        if (const std::optional<Area> where = taker->absolute()) made.at = Spot{pointer_.x - where->at.x, pointer_.y - where->at.y};
+
+        taker->notified(made);
+    }
+
+    held.carried->landed(taker != nullptr && dropping);
 }
 
 // Delivers pasted text to the node with the focus, or to the document; text that names files
@@ -887,13 +987,23 @@ Node* Document::following(const Node* from, bool back, const Node* skipped) {
 }
 
 // Lets go of `gone`, which leaves the tree: a focus inside moves on as Tab moves it, a capture
-// inside ends, and the nodes inside are no longer hovered.
+// inside ends, a taker of what is carried inside takes it no longer, and the nodes inside are no
+// longer hovered.
 void Document::forgotten(Node& gone) {
     if (confined_ != nullptr && gone.holds(*confined_)) confined_ = nullptr;
 
     if (focus_ != nullptr && gone.holds(*focus_)) moved(following(focus_, false, &gone));
 
     if (captured_ != nullptr && gone.holds(*captured_)) captured_ = nullptr;
+
+    if (carrying_) {
+        const std::shared_ptr<Node> taker = carrying_->taker.lock();
+
+        if (taker != nullptr && gone.holds(*taker)) {
+            taker->state(State::drag, false);
+            carrying_->taker.reset();
+        }
+    }
 
     std::vector<Node*> kept;
 

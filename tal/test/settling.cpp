@@ -359,6 +359,76 @@ TRIAL("settings: a broken file is damaged, and writing leaves it alone") {
     SAME(desk.outcome(one.write()), std::string{});
 }
 
+// Built-in values with a version give it to the file before the deviations; a file without one,
+// or of an older one, is read as it is, and one of a newer version is read but never written over,
+// unless the person starts again from the built-in values.
+TRIAL("settings: the version of the built-in values goes to the file, a newer file stays untouched") {
+    Desk desk;
+    Settings two{R"({"version": 2, "a": {"b": 1}})", Path{spot}};
+    constexpr tal::Setting<int> b{"a.b"};
+
+    SAME(desk.outcome(two.read()), std::string{});
+    OUGHT(!two.newer());
+
+    two.set(b, 5);
+
+    SAME(desk.outcome(two.write()), std::string{});
+    SAME(desk.inside(), std::string{R"({"version":2,"a":{"b":5}})"});
+
+    for (const std::string_view older : {R"({"a":{"b":7}})", R"({"version":1,"a":{"b":7}})", R"({"version":"3","a":{"b":7}})", R"({"version":-4,"a":{"b":7}})",
+                                         R"({"version":-4294967291,"a":{"b":7}})"}) {
+        desk.put(older);
+        SAME(desk.outcome(two.read()), std::string{});
+        OUGHT(!two.newer());
+        SAME(two.get(b), 7);
+        SAME(desk.outcome(two.write()), std::string{});
+        SAME(desk.inside(), std::string{R"({"version":2,"a":{"b":7}})"});
+    }
+
+    const std::string newer = R"({"version": 3, "a": {"b": 9}, "z": {"y": "new"}})";
+
+    desk.put(newer);
+    SAME(desk.outcome(two.read()), std::string{});
+    OUGHT(two.newer());
+    OUGHT(!two.damaged());
+    SAME(two.get(b), 9);
+    SAME(desk.outcome(two.write()), std::string{"The settings file comes from a newer version and stays untouched."});
+    SAME(desk.text(), newer);
+
+    desk.put(R"({"version": 2, "a": {"b": 6}})");
+    SAME(desk.outcome(two.read()), std::string{});
+    OUGHT(!two.newer());
+    SAME(two.get(b), 6);
+
+    desk.put(newer);
+    SAME(desk.outcome(two.read()), std::string{});
+    SAME(desk.outcome(two.restore()), std::string{});
+    OUGHT(!two.newer());
+    SAME(desk.inside(), std::string{R"({"version":2})"});
+
+    const std::string broken = R"({"version": 3, "a": {"b": 4},})";
+
+    desk.put(broken);
+    SAME(desk.outcome(two.read()), std::string{});
+    OUGHT(two.damaged());
+    SAME(desk.outcome(two.repair()), std::string{});
+    OUGHT(!two.damaged());
+    OUGHT(two.newer());
+    SAME(two.get(b), 4);
+    SAME(desk.text(), broken);
+
+    desk.put(R"({"version": 1, "a": {"b": 3},})");
+    SAME(desk.outcome(two.read()), std::string{});
+    SAME(desk.outcome(two.repair()), std::string{});
+    OUGHT(!two.newer());
+    SAME(desk.inside(), std::string{R"({"version":2,"a":{"b":3}})"});
+
+    Settings plain = Desk::settings();
+
+    SAME(desk.outcome(plain.restore()), std::string{});
+    SAME(desk.inside(), std::string{"{}"});
+}
+
 TRIAL("settings: repair removes comments, commas and the BOM, the original stays beside it") {
     Desk desk;
     Settings one = Desk::settings();
@@ -589,6 +659,9 @@ TRIAL("settings: the generator gives each value a type and refuses what has none
     SAME(alone(generator(R"([])")), std::string{"defaults.json:1:1: the settings are not an object"});
     SAME(alone(generator(R"({"a":)")), std::string{"defaults.json:1:6: a value is missing"});
     SAME(alone(generator(R"({"a":{"b":1}})", "std")), std::string{R"(tal-settings: "std" cannot be the namespace of the settings)"});
+    SAME(alone(generator(R"({"version":0,"a":{"b":1}})")), std::string{R"(defaults.json:1:12: "version" is the version of the file, a whole number from 1)"});
+    SAME(alone(generator(R"({"version":"2","a":{"b":1}})")), std::string{R"(defaults.json:1:12: "version" is the version of the file, a whole number from 1)"});
+    OUGHT(generator(R"({"version":2,"a":{"version":"x"}})").empty());
 
     std::vector<std::string> problems;
     const tal::generating::Made made = tal::generating::settled(
@@ -604,6 +677,12 @@ TRIAL("settings: the generator gives each value a type and refuses what has none
     OUGHT(made.header.find("namespace my::set {\n\ninline constexpr ::tal::Setting<::tal::Records> g{\"g\"};\n"
                            "inline constexpr ::tal::Setting<::tal::Records> h{\"h\"};\n") != std::string::npos);
     OUGHT(made.code.starts_with("#include \"set.hpp\"\n"));
+
+    const tal::generating::Made versioned = tal::generating::settled({"defaults.json", R"({"version":4,"a":{"b":true}})"}, "my::set", "set.hpp", problems);
+
+    OUGHT(problems.empty());
+    OUGHT(versioned.header.find("version") == std::string::npos);
+    OUGHT(versioned.header.find("Setting<bool> b{\"a.b\"}") != std::string::npos);
     OUGHT(generator(R"({"a":{"b":-2147483648,"c":2147483647}})").empty());
 }
 

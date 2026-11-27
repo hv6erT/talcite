@@ -38,10 +38,13 @@ Loop::Loop(Port<Clock> time) : time_(std::move(time)), life_(std::make_shared<Li
     (void)program_loop.compare_exchange_strong(none, this);
 }
 
-// Stops being the program's loop, and tells the timers that outlive it that it is gone. Work still
-// queued and timers still waiting are dropped then: dropping them may destroy frames of cancelled
-// tasks, whose timers then withdraw nothing. A frame waiting on this loop never resumes.
+// First waits for the chains away from the loop (`drained`). Then stops being the program's loop,
+// and tells the timers that outlive it that it is gone. Work still queued and timers still waiting
+// are dropped then: dropping them may destroy frames of cancelled tasks, whose timers then withdraw
+// nothing. A frame waiting on this loop never resumes.
 Loop::~Loop() {
+    drained();
+
     {
         Loop* self = this;
         const std::lock_guard<std::mutex> kept{program_guard};
@@ -235,6 +238,46 @@ std::optional<std::chrono::steady_clock::time_point> Loop::next() const {
 // loop's own waiting has been woken. A loop that waits elsewhere (an application waiting on its
 // console) overrides it to end that wait; the loop itself needs nothing more.
 void Loop::stirred() {}
+
+// A chain left the loop for another executor; the loop waits for it before it goes.
+void Loop::left() {
+    const std::lock_guard<std::mutex> kept{guard_};
+
+    ++away_;
+}
+
+// A chain away from the loop came back, ended or was destroyed. The loop is woken under its lock,
+// so that a loop going away waits until this call has let go of it.
+void Loop::returned() {
+    const std::lock_guard<std::mutex> kept{guard_};
+
+    --away_;
+    stirred_.notify_all();
+}
+
+// Turns until no chain is away from the loop and nothing is queued: work away on a pool comes back
+// here, or ends there, or (cancelled) is destroyed there, so that none of it reaches a loop that is
+// gone. The loop works meanwhile as ever: what came back runs here until it ends or waits, what was
+// doomed is destroyed here, timers fire as their clock says.
+void Loop::drained() {
+    for (;;) {
+        {
+            std::unique_lock<std::mutex> kept{guard_};
+
+            const auto woken = [this] { return !ready_.empty() || away_ == 0; };
+            const bool due = !due_.empty() && due_.begin()->first <= time_->now();
+
+            if (!woken() && !due) {
+                if (due_.empty() || time_->manual()) stirred_.wait(kept, woken);
+                else (void)stirred_.wait_until(kept, due_.begin()->first, woken);
+            }
+
+            if (away_ == 0 && ready_.empty()) return;
+        }
+
+        (void)turn();
+    }
+}
 
 // Whether nothing is queued and no timer waits.
 bool Loop::idle() const {

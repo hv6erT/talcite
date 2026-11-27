@@ -28,7 +28,8 @@ Each part is a CMake target of its own; a program links the ones it uses.
   JSON, XML, zip and tar archives (plain or through gzip, with our own inflate).
 - Text: UTF-8, terminal cells, letter case, collation and the rules of languages; the texts of a
   program in its languages and its settings, both generated from JSON while it is built
-  (`tal_texts`, `tal_settings`); the log, troubles (`tal::Trouble` and its kinds).
+  (`tal_texts`, `tal_settings`), and the rules a translation must keep (`tal::wording`); the log,
+  troubles (`tal::Trouble` and its kinds).
 - Digests and ciphers from the system: CNG on Windows, the kernel's AF_ALG on Linux.
 
 `tal-net`
@@ -60,7 +61,8 @@ Each part is a CMake target of its own; a program links the ones it uses.
   the alternate screen, sixel and kitty graphics) and reads input in every form terminals send it.
 - The document is a tree of nodes (`Node`), laid out by `Row`, `Column`, `Grid`, `Align` and
   `Split` (its room shared by parts, the borders dragged with the mouse), styled by classes with
-  parameters (no cascade), told of events through `on<E>` and `Hook`.
+  parameters (no cascade), told of events through `on<E>` and `Hook`; loads carried with the mouse
+  from node to node (`dragged`, `DragOver`, `Dropped`).
 - Widgets: labels, buttons, ticks, choices, selects, gauges, fields with history, lists, tables,
   trees, scrolling, windows with their layers, messages, forms and a palette of actions found by
   their letters, menus with a menu bar, a key bar and tabs (also in the edge of a frame), a text editor, a diff, images, the pages of documents (`Leaves`), web pages
@@ -104,7 +106,7 @@ Options:
 | `TAL_OWN_CURVE` | `OFF` | Our own arithmetic of curve 25519, for CPace. |
 | `TAL_REMEMBER_LOGINS` | `OFF` | Logins of shares remembered by the system (Windows). |
 | `TAL_NET_KQUEUE` | `OFF` | Wait for sockets through kqueue where the system has another way (libkqueue on Linux). |
-| `TAL_PDFIUM` | `OFF` | Render PDF through PDFium in a process of its own (fetches PDFium, checked by its SHA-256). |
+| `TAL_PDFIUM` | `OFF` | Render PDF through PDFium in a process of its own (fetches PDFium, checked by its SHA-256; on Windows the program carries the library and unpacks it, checked, into the user's local data). |
 | `TAL_WEBKITGTK` | `OFF` | Show web pages through WebKitGTK 6 in a process of its own (Linux). |
 | `TAL_WEBVIEW2` | `OFF` | Show web pages through WebView2 in a process of its own (Windows). |
 | `TAL_FUZZ` | `OFF` | Build the fuzz targets (Clang only; instruments the whole build). |

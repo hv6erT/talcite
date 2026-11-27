@@ -34,6 +34,8 @@ public:
 
     [[nodiscard]] bool damaged() const { return damaged_; }
 
+    [[nodiscard]] bool newer() const { return newer_; }
+
     [[nodiscard]] Task<void> repair();
 
     [[nodiscard]] Task<void> restore();
@@ -64,6 +66,7 @@ private:
     json::Value mine_;
     Path where_;
     bool damaged_ = false;
+    bool newer_ = false;
     std::shared_ptr<Gate> gate_;
 };
 
