@@ -157,6 +157,53 @@ TRIAL("Row: without room the first children take what there is") {
     OUGHT(after.area() == (Area{{5, 0}, {0, 1}}));
 }
 
+// Where the room is too short for all, the children that yield give up their place, the highest
+// yield first and of equal ones the last, until the rest fit: they lie empty and take no gap. With
+// room enough none yields, a child of yield 0 never does, and once all that yield are gone the rest
+// share what there is as without room.
+TRIAL("Row: children that yield give up their place first when the room is short") {
+    Laid<Row> laid{Size{21, 1}, 1};
+    Block& name = laid.block({8, 1}, Share{1, 8});
+    Block& size = laid.block({5, 1}, Share{0, 0, 1});
+    Block& date = laid.block({6, 1}, Share{0, 0, 2});
+
+    laid.framed();
+
+    OUGHT(name.area() == (Area{{0, 0}, {8, 1}}));
+    OUGHT(size.area() == (Area{{9, 0}, {5, 1}}));
+    OUGHT(date.area() == (Area{{15, 0}, {6, 1}}));
+
+    laid.document.display({.screen = {15, 1}, .colors = Colors::rgb, .unicode = true});
+    laid.framed();
+
+    OUGHT(name.area() == (Area{{0, 0}, {9, 1}}));
+    OUGHT(size.area() == (Area{{10, 0}, {5, 1}}));
+    OUGHT(date.area().size == (Size{0, 0}));
+
+    laid.document.display({.screen = {9, 1}, .colors = Colors::rgb, .unicode = true});
+    laid.framed();
+
+    OUGHT(name.area() == (Area{{0, 0}, {9, 1}}));
+    OUGHT(size.area().size == (Size{0, 0}));
+    OUGHT(date.area().size == (Size{0, 0}));
+
+    laid.document.display({.screen = {5, 1}, .colors = Colors::rgb, .unicode = true});
+    laid.framed();
+
+    OUGHT(name.area() == (Area{{0, 0}, {5, 1}}));
+
+    Laid<Row> equal{Size{10, 1}};
+    Block& first = equal.block({4, 1}, Share{0, 0, 1});
+    Block& second = equal.block({4, 1}, Share{0, 0, 1});
+    Block& third = equal.block({4, 1});
+
+    equal.framed();
+
+    OUGHT(first.area() == (Area{{0, 0}, {4, 1}}));
+    OUGHT(second.area().size == (Size{0, 0}));
+    OUGHT(third.area() == (Area{{4, 0}, {4, 1}}));
+}
+
 // A column lays out down as a row does across. A content of weight 1 over bars of weight 0 is the
 // old footed column: the bars get their rows first, the content what is left.
 TRIAL("Column: children down by the same rule, the content over its bars") {

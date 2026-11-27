@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -59,9 +60,70 @@ std::vector<int> divided(const std::vector<int>& wanted, const std::vector<Share
     return made;
 }
 
+// Which of the stretches keep their place in `room` cells, `gap` cells apart: all, while what they
+// need (what one of weight 0 wants, the `least` of a weighted one) fits; else those that yield
+// give up their place, the highest `yields` first and among equal ones the last, until the rest
+// fit or none that yields is left. One of `yields` 0 never gives up its place.
+std::vector<bool> kept(const std::vector<int>& wanted, const std::vector<Share>& shares, int room, int gap) {
+    std::vector<bool> made(wanted.size(), true);
+    const auto needed = [&] {
+        int sum = 0;
+        std::size_t count = 0;
+
+        for (std::size_t at = 0; at < wanted.size(); ++at) {
+            if (!made[at]) continue;
+
+            sum += std::max(shares[at].weight == 0 ? wanted[at] : shares[at].least, 0);
+            ++count;
+        }
+
+        return sum + (count < 2 ? 0 : static_cast<int>(count - 1) * std::max(gap, 0));
+    };
+
+    while (needed() > room) {
+        std::optional<std::size_t> going;
+
+        for (std::size_t at = 0; at < wanted.size(); ++at)
+            if (made[at] && shares[at].yields > 0 && (!going || shares[at].yields >= shares[*going].yields)) going = at;
+
+        if (!going) break;
+
+        made[*going] = false;
+    }
+
+    return made;
+}
+
+// The lengths of the stretches in `room` cells, `gap` cells apart, as `divided` gives them among
+// those that keep their place (`kept`); one that yields has 0, and no gap beside it.
+std::vector<int> yielded(const std::vector<int>& wanted, const std::vector<Share>& shares, int room, int gap) {
+    const std::vector<bool> staying = kept(wanted, shares, room, gap);
+    std::vector<int> some;
+    std::vector<Share> theirs;
+
+    for (std::size_t at = 0; at < wanted.size(); ++at) {
+        if (!staying[at]) continue;
+
+        some.push_back(wanted[at]);
+        theirs.push_back(shares[at]);
+    }
+
+    const int gaps = some.size() < 2 ? 0 : static_cast<int>(some.size() - 1) * std::max(gap, 0);
+    const std::vector<int> lengths = divided(some, theirs, room - gaps);
+    std::vector<int> made(wanted.size(), 0);
+    std::size_t next = 0;
+
+    for (std::size_t at = 0; at < wanted.size(); ++at)
+        if (staying[at]) made[at] = lengths[next++];
+
+    return made;
+}
+
 }
 
 using dividing::divided;
+using dividing::kept;
+using dividing::yielded;
 
 namespace {
 
@@ -98,7 +160,8 @@ Size lined(const Node& owner, Limits room, Axis axis, int gap) {
 }
 
 // Places the children of a line along `axis` in `inside`: one after another with `gap` cells
-// between them, each as long as `divided` gives it and as thick as the line.
+// between them, each as long as `divided` gives it and as thick as the line; where the line is too
+// short for all, those that yield give up their place first (`yielded`) and lie empty, with no gap.
 void laid(Node& owner, Area inside, Axis axis, int gap) {
     std::vector<Node*> children;
     std::vector<int> wanted;
@@ -111,12 +174,19 @@ void laid(Node& owner, Area inside, Axis axis, int gap) {
     }
 
     const int space = std::max(gap, 0);
-    const std::vector<int> lengths = divided(wanted, shares, along(inside.size, axis) - gaps(children.size(), gap));
+    const std::vector<bool> staying = kept(wanted, shares, along(inside.size, axis), gap);
+    const std::vector<int> lengths = yielded(wanted, shares, along(inside.size, axis), gap);
     const int thick = across(inside.size, axis);
     int at = 0;
 
     for (std::size_t which = 0; which < children.size(); ++which) {
         const Spot start = axis == Axis::horizontal ? Spot{inside.at.x + at, inside.at.y} : Spot{inside.at.x, inside.at.y + at};
+
+        if (!staying[which]) {
+            children[which]->placed(Area{start, Size{0, 0}});
+
+            continue;
+        }
 
         children[which]->placed(Area{start, sized(lengths[which], thick, axis)});
         at += lengths[which] + space;
@@ -336,7 +406,9 @@ void Align::arrange(Area inside) {
 // `least` cells while the room holds that much, with `gap` cells between them, where the split
 // draws a line. A border between two children is dragged with the left button from its gap or the
 // cell on either side of it, where nothing under the pointer takes the press; while it is dragged
-// the split has the state `drag`. Every move of a border tells `Resized`.
+// the split has the state `drag`. Every move of a border tells `Resized`. When the room is short of
+// `least` for each child, the children that yield (`Share::yields`) give up their place, and no
+// border shows or moves while one has.
 Split::Split(Axis along, int gap) : axis(*this, Effect::layout, along), gap_(std::max(gap, 0)) {
     classes({"split"});
 
@@ -426,7 +498,7 @@ double Split::part(const Node& child) const {
 // border that does not stand (past the last child, or before the split is first arranged) and a
 // move that changes nothing do nothing; any other tells `Resized`.
 void Split::moved(std::size_t border, int by) {
-    if (border + 1 >= lengths_.size() || by == 0) return;
+    if (crowded_ || border + 1 >= lengths_.size() || by == 0) return;
 
     const int fewest = std::max(*least, 0);
     const int first = lengths_[border];
@@ -482,19 +554,49 @@ Size Split::measure(Limits room) const {
 // across it. The room left after the gaps is shared in proportion to the parts; a child whose share
 // falls below `least` gets `least` and the rest is shared again among the others; the cells the
 // rounding leaves over go one each to the children with the largest remainders, the first of equal
-// ones first. Where the room is less than `least` for each child, it is shared evenly.
+// ones first. Where the room is less than `least` for each child, the children that yield give up
+// their place first, the highest `yields` first and among equal ones the last, each placed empty
+// at the split's corner, until the others have `least` each; what room there is then goes to those
+// left as above, shared evenly while it is still short.
 void Split::arrange(Area inside) {
     inside_ = inside;
 
+    std::vector<Node*> all;
+    std::vector<Share> shares;
+
+    for (Node& one : children()) {
+        all.push_back(&one);
+        shares.push_back(Share{0, 0, one.share().yields});
+    }
+
+    const std::vector<bool> staying = kept(std::vector<int>(all.size(), std::max(*least, 0)), shares, along(inside.size, *axis), gap_);
     std::vector<Node*> nodes;
 
-    for (Node& one : children()) nodes.push_back(&one);
+    crowded_ = false;
+
+    for (std::size_t one = 0; one < all.size(); ++one) {
+        if (staying[one]) {
+            nodes.push_back(all[one]);
+        } else {
+            crowded_ = true;
+            all[one]->placed(Area{inside.at, Size{0, 0}});
+        }
+    }
 
     const std::size_t count = nodes.size();
     const int room = std::max(along(inside.size, *axis) - gaps(count, gap_), 0);
     const int fewest = std::max(*least, 0);
     const bool enough = room >= static_cast<int>(count) * fewest;
-    std::vector<double> weights = enough ? parts() : std::vector<double>(count, 1.0);
+    std::vector<double> weights(count, 1.0);
+
+    if (enough) {
+        const std::vector<double> every = parts();
+
+        weights.clear();
+
+        for (std::size_t one = 0; one < all.size(); ++one)
+            if (staying[one]) weights.push_back(every[one]);
+    }
     std::vector<int> made(count, 0);
     std::vector<bool> fixed(count, false);
     std::vector<double> ideal(count, 0);
@@ -546,7 +648,10 @@ void Split::arrange(Area inside) {
         --left;
     }
 
-    lengths_ = made;
+    lengths_.assign(all.size(), 0);
+
+    for (std::size_t one = 0, next = 0; one < all.size(); ++one)
+        if (staying[one]) lengths_[one] = made[next++];
 
     const int thick = across(inside.size, *axis);
     int at = 0;
@@ -561,7 +666,7 @@ void Split::arrange(Area inside) {
 
 // The line of the sheet's thin glyphs down each gap (across it for a split down the screen).
 void Split::paint(Canvas& onto) const {
-    if (gap_ == 0) return;
+    if (gap_ == 0 || crowded_) return;
 
     const std::string_view line = glyph(*axis == Axis::horizontal ? "line.thin.upright" : "line.thin.across");
     const Look plain = look();
@@ -625,8 +730,11 @@ int Split::along_of(Spot one) const { return *axis == Axis::horizontal ? one.x :
 
 // The border whose gap, or the last cell of the child before the gap, holds the cell `at` along the
 // axis; none for any other cell. The first cell of the child after the gap is that child's: it is
-// where a frame's top edge, which may hold names to click, lies in a split down the screen.
+// where a frame's top edge, which may hold names to click, lies in a split down the screen. None
+// while a child has given up its place.
 std::optional<std::size_t> Split::border_at(int at) const {
+    if (crowded_) return std::nullopt;
+
     for (std::size_t border = 0; border + 1 < lengths_.size(); ++border) {
         const int from = border_spot(border);
 

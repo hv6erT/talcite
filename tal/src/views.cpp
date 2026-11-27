@@ -411,6 +411,8 @@ Table::Table(std::shared_ptr<Model> model, std::vector<Heading> headings)
         int at = 0;
 
         for (std::size_t one = 0; one < widths.size(); ++one) {
+            if (widths[one] == 0) continue;
+
             if (x < at + widths[one] + spacing) {
                 Sorted told{one};
 
@@ -439,6 +441,8 @@ void Table::paint(Canvas& onto) const {
     onto.fill(Area{{0, 0}, {onto.size().wide, 1}}, head);
 
     for (std::size_t one = 0; one < widths.size(); ++one) {
+        if (widths[one] == 0) continue;
+
         const Heading& column = (*columns)[one];
         Canvas cell = onto.within(Area{{at, 0}, {widths[one], 1}});
 
@@ -458,6 +462,8 @@ void Table::drawn(Canvas& onto, std::size_t row, States states) const {
     int at = 0;
 
     for (std::size_t one = 0; one < widths.size(); ++one) {
+        if (widths[one] == 0) continue;
+
         const Entry entry = model().entry(row, one);
         const int room = entry.spans ? onto.size().wide - at : widths[one];
         Canvas cell = onto.within(Area{{at, 0}, {std::max(room, 0), 1}});
@@ -471,7 +477,8 @@ void Table::drawn(Canvas& onto, std::size_t row, States states) const {
 }
 
 // The widths of the columns in `wide` columns, a column apart: as `Row` shares its room, a column
-// of weight 0 wanting exactly its `least`.
+// of weight 0 wanting exactly its `least`; where the room is too narrow for all, the columns that
+// yield give up their place first (`Share::yields`) and have width 0, with no gap beside them.
 std::vector<int> Table::spread(int wide) const {
     std::vector<int> wanted;
     std::vector<Share> shares;
@@ -481,9 +488,7 @@ std::vector<int> Table::spread(int wide) const {
         shares.push_back(one.share);
     }
 
-    const int gaps = wanted.empty() ? 0 : static_cast<int>(wanted.size() - 1) * spacing;
-
-    return dividing::divided(wanted, shares, wide - gaps);
+    return dividing::yielded(wanted, shares, wide, spacing);
 }
 
 // A tree of the rows of `model`, in the class "tree" too: each row two columns in for each level of

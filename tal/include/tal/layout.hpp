@@ -119,6 +119,7 @@ private:
     int gap_;
     std::vector<Part> parts_;
     std::vector<int> lengths_;
+    bool crowded_ = false;
     Area inside_{};
     std::optional<std::size_t> dragging_;
     int grip_ = 0;

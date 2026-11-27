@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -12,6 +13,7 @@
 #include <vector>
 
 #include "tal/executor.hpp"
+#include "tal/fs.hpp"
 #include "tal/path.hpp"
 #include "tal/share.hpp"
 #include "tal/task.hpp"
@@ -234,6 +236,7 @@ TRIAL("Share: the reasons of gio and of Windows are kinds of trouble, the networ
     for (const std::uint32_t code : {50U, 1200U, 1204U}) SAME(named(sharing::by_windows(code)), named(Kind::unsupported));
 
     SAME(named(sharing::by_windows(1219)), named(Kind::exists));
+    SAME(named(sharing::by_windows(1223)), named(Kind::refused));
     SAME(named(sharing::by_windows(0)), named(Kind::other));
     SAME(named(sharing::by_windows(87)), named(Kind::other));
 }
@@ -245,12 +248,28 @@ TRIAL("Share: a share without a server or a name is the caller's error; remember
     SAME(kind_of(loop, tal::fs::reach(Share{"nas", "", "", ""})), named(Kind::other));
     SAME(kind_of(loop, tal::fs::connect(Share{"", "films", "", ""}, "hubert", "sekret")), named(Kind::other));
     SAME(kind_of(loop, tal::fs::shares(Share{"", "films", "", ""})), named(Kind::other));
+    SAME(kind_of(loop, tal::fs::connect(Share{"nas", "", "", ""})), named(Kind::other));
+    SAME(kind_of(loop, tal::fs::connect(Share{"", "films", "", ""}, true)), named(Kind::other));
 
 #if defined(_WIN32) && defined(TAL_REMEMBER_LOGINS)
     OUGHT(tal::fs::keeps_logins());
 #else
     OUGHT(!tal::fs::keeps_logins());
 #endif
+}
+
+// Files that reach no network, as the memory's, are connected to no share and reach, connect to
+// and list none.
+TRIAL("Share: an adapter without a network has no connections and reaches no share") {
+    tal::Loop loop;
+    tal::fs::Memory memory;
+    const Share films{"nas", "films", "", ""};
+
+    OUGHT(tal::wait(loop, memory.connections()).empty());
+    SAME(kind_of(loop, memory.reach(films)), named(Kind::unsupported));
+    SAME(kind_of(loop, memory.connect(films)), named(Kind::unsupported));
+    SAME(kind_of(loop, memory.connect(films, true)), named(Kind::unsupported));
+    SAME(kind_of(loop, memory.shares(Share{"nas", "", "", ""})), named(Kind::unsupported));
 }
 
 #ifdef _WIN32
@@ -297,6 +316,28 @@ TRIAL("Share: GVfs: a share mounted already is reached without gio, with the res
     SAME(shown(tal::fs::shared(stage.gvfs())), std::string{"none"});
     SAME(shown(tal::fs::shared(stage.gvfs() / "sftp:host=nas" / "a")), std::string{"none"});
     SAME(shown(tal::fs::shared(Path{"/films/a"})), std::string{"none"});
+}
+
+// The connections are the shares mounted in GVfs, all connected, with no letter; connecting
+// reaches one with the login the system holds, and asking for another login is unsupported, there
+// being no window of the system to ask in.
+TRIAL("Share: GVfs: the connections are the mounts; connecting takes the login held, never asks") {
+    tal::Loop loop;
+    const Stage stage;
+    const Path films = stage.mounted("smb-share:server=nas,share=films,user=hubert");
+
+    (void)stage.mounted("sftp:host=nas");
+
+    const std::vector<tal::fs::Connection> found = tal::wait(loop, tal::fs::connections());
+
+    SAME(found.size(), std::size_t{1});
+    SAME(shown(found.at(0).share), std::string{"nas|films||hubert"});
+    OUGHT(found.at(0).connected && !found.at(0).drive);
+
+    SAME(tal::wait(loop, tal::fs::connect(Share{"nas", "films", "", "hubert"})), films);
+    SAME(stage.got("args"), std::string{});
+    SAME(kind_of(loop, tal::fs::connect(Share{"nas", "films", "", ""}, true)), named(Kind::unsupported));
+    SAME(stage.got("args"), std::string{});
 }
 
 TRIAL("Share: GVfs: one not mounted is mounted by gio in English and found; gio's failure is its kind") {

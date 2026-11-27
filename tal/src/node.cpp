@@ -286,10 +286,11 @@ bool Node::focusable() const {
 }
 
 // Sets how the node takes room in a row, a column or a grid: with weight 0 as much as it wants,
-// otherwise `least` and a part of what is left in proportion to its weight. A negative weight or
-// least counts as zero. The parent lays its children out again.
+// otherwise `least` and a part of what is left in proportion to its weight; one that `yields`
+// gives up its place when the room is short, the highest first. A negative weight, least or yields
+// counts as zero. The parent lays its children out again.
 void Node::share(Share how) {
-    how = Share{std::max(how.weight, 0), std::max(how.least, 0)};
+    how = Share{std::max(how.weight, 0), std::max(how.least, 0), std::max(how.yields, 0)};
 
     if (how == share_) return;
 

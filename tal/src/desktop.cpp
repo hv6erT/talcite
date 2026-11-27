@@ -575,8 +575,8 @@ public:
 
     // The default program of the file's type, searched along its lineage, nearest type first: for
     // each type its defaults, then its associated programs, the first one installed, before its
-    // parent is asked, so that a program made for the type wins over the default of a broader one (a reader
-    // of .nfo files over the plain text editor).
+    // parent is asked, so that a program made for the type wins over the default of a broader one
+    // (a reader of .nfo files over the plain text editor).
     Task<std::optional<std::pair<std::string, Installed>>> chosen_for(std::vector<std::string> line) {
         for (const std::string& type : line) {
             std::vector<std::string> ids = co_await defaults_of(type);

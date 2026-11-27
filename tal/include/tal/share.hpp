@@ -19,6 +19,14 @@ struct Share {
     friend bool operator==(const Share&, const Share&) = default;
 };
 
+struct Connection {
+    Share share;
+    bool connected = false;
+    std::optional<Path> drive{};
+
+    friend bool operator==(const Connection&, const Connection&) = default;
+};
+
 [[nodiscard]] std::optional<Share> addressed(std::string_view said);
 
 [[nodiscard]] std::string written(const Share& one);
@@ -31,6 +39,10 @@ struct Share {
 
 [[nodiscard]] Task<Path> connect(Share one, std::string user, std::string password, bool remember = false);
 
+[[nodiscard]] Task<Path> connect(Share one, bool again = false);
+
 [[nodiscard]] Task<std::vector<std::string>> shares(Share server);
+
+[[nodiscard]] Task<std::vector<Connection>> connections();
 
 }

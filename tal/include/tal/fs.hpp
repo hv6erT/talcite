@@ -14,6 +14,7 @@
 #include "tal/path.hpp"
 #include "tal/port.hpp"
 #include "tal/progress.hpp"
+#include "tal/share.hpp"
 #include "tal/task.hpp"
 
 namespace tal::fs {
@@ -240,6 +241,14 @@ public:
     [[nodiscard]] virtual Task<std::optional<Path>> known(Known which) = 0;
 
     [[nodiscard]] virtual Watch watch(const Path& folder, bool deep = false) = 0;
+
+    [[nodiscard]] virtual Task<std::vector<Connection>> connections();
+
+    [[nodiscard]] virtual Task<Path> reach(Share one);
+
+    [[nodiscard]] virtual Task<Path> connect(Share one, bool again = false);
+
+    [[nodiscard]] virtual Task<std::vector<std::string>> shares(Share server);
 };
 
 [[nodiscard]] Task<std::vector<Entry>> list(const Path& folder);

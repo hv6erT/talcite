@@ -513,6 +513,18 @@ public:
     // Watches a folder that is there; its changes come from the system as they happen.
     fs::Watch watch(const Path& folder, bool deep) override { return fs::Watch{core::watched(folder_there(absolute(folder)), deep)}; }
 
+    // The shares the system is connected to or remembers (`fs::connections`).
+    Task<std::vector<fs::Connection>> connections() override { return fs::connections(); }
+
+    // The path of a share, with the login the system holds (`fs::reach`).
+    Task<Path> reach(fs::Share one) override { return fs::reach(std::move(one)); }
+
+    // Connects to a share, the system asking for a login in its own window (`fs::connect`).
+    Task<Path> connect(fs::Share one, bool again) override { return fs::connect(std::move(one), again); }
+
+    // The shares of a server (`fs::shares`).
+    Task<std::vector<std::string>> shares(fs::Share server) override { return fs::shares(std::move(server)); }
+
 private:
     // A volume of the core in the port's terms.
     static fs::Volume described(const Volume& one) {

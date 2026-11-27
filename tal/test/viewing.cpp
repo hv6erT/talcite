@@ -555,6 +555,34 @@ TRIAL("Table: columns under their titles, a spanning cell, sorting asked by a cl
     OUGHT(sorted.size() == 3);
 }
 
+// Columns that yield give up their place when the table is too narrow for all, the highest yield
+// first: they show neither title nor cells, no gap is left for them, and a click lands on the
+// columns that are there.
+TRIAL("Table: columns that yield leave a narrow table first") {
+    Scene scene{{.screen = {14, 3}}};
+    Document document{scene.time()};
+    auto rows = std::make_shared<Rows>(1, 3);
+    Table& table = document.children().add<Table>(
+        rows, std::vector<Heading>{{"Name", Share{1, 4}, Edge::start}, {"Sz", Share{0, 4, 1}, Edge::end}, {"Date", Share{0, 6, 2}, Edge::start}});
+    std::vector<std::size_t> sorted;
+    Hooks hooks;
+
+    hooks.add(table.on<Sorted>([&sorted](Sorted& what) { sorted.push_back(what.column); }));
+    scene.show(document);
+
+    SAME(scene.row(0), std::string{"Name        Sz"});
+    SAME(scene.row(1), std::string{"r0c0      r0c1"});
+
+    scene.click({13, 0});
+
+    OUGHT(sorted == (std::vector<std::size_t>{1}));
+
+    scene.resize({20, 3});
+    scene.wait(0ms);
+
+    SAME(scene.row(0), std::string{"Name       Sz Date  "});
+}
+
 // A tree over a model of nested rows: two columns in for each level, the mark of the branch, the
 // text. The right arrow opens a closed branch, the left one closes an open one and goes from any
 // other row to its parent; a click on the mark opens or closes it, and on a leaf does nothing.

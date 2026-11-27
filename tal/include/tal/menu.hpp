@@ -63,6 +63,10 @@ public:
 
     [[nodiscard]] bool opened() const;
 
+    Property<std::string> folded{*this, Effect::layout, std::string{}};
+
+    [[nodiscard]] bool folding() const { return folding_; }
+
 protected:
     [[nodiscard]] Size measure(Limits room) const override;
 
@@ -88,6 +92,7 @@ private:
 
     std::vector<std::weak_ptr<Drop>> drops_;
     std::size_t root_ = 0;
+    bool folding_ = false;
 };
 
 class KeyBar : public Node {

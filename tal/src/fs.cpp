@@ -239,6 +239,43 @@ Task<Trashed> Files::trash(const Path& what) {
     }(*this, what);
 }
 
+// The shares of the network the system is connected to or remembers: none, unless the adapter
+// reaches a network.
+Task<std::vector<Connection>> Files::connections() {
+    return []() -> Task<std::vector<Connection>> { co_return std::vector<Connection>{}; }();
+}
+
+// The path of the share `one`: refused as unsupported, unless the adapter reaches a network.
+Task<Path> Files::reach(Share one) {
+    return [](Share given) -> Task<Path> {
+        throw Trouble{Kind::unsupported, "There is no network here.", written(given)};
+
+        co_return Path{};
+    }(std::move(one));
+}
+
+// Connects to the share `one`, the system asking for a login in its own window: refused as
+// unsupported, unless the adapter reaches a network.
+Task<Path> Files::connect(Share one, bool again) {
+    (void)again;
+
+    return [](Share given) -> Task<Path> {
+        throw Trouble{Kind::unsupported, "There is no network here.", written(given)};
+
+        co_return Path{};
+    }(std::move(one));
+}
+
+// The shares of the server of `server`: refused as unsupported, unless the adapter reaches a
+// network.
+Task<std::vector<std::string>> Files::shares(Share server) {
+    return [](Share given) -> Task<std::vector<std::string>> {
+        throw Trouble{Kind::unsupported, "There is no network here.", written(given)};
+
+        co_return std::vector<std::string>{};
+    }(std::move(server));
+}
+
 // Gives an entry back from the trash: refused as unsupported, unless the adapter keeps a trash
 // that gives entries back.
 Task<void> Files::restore(const Trashed& one, Conflict how) {

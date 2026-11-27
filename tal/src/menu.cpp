@@ -425,8 +425,19 @@ Size MenuBar::Title::measure(Limits room) const {
     return Size{text::width(said, rendering()) + 2, 1};
 }
 
-// The text one column in, its letter in the look of the part "key".
-void MenuBar::Title::paint(Canvas& onto) const { (void)spelled(onto, {1, 0}, said, marked, look(), look("key"), rendering()); }
+// The text one column in, its letter in the look of the part "key"; the first title of a folded bar
+// shows the bar's folded text instead.
+void MenuBar::Title::paint(Canvas& onto) const {
+    const auto* bar = dynamic_cast<const MenuBar*>(parent());
+
+    if (bar != nullptr && bar->folding() && bar->titles().front() == this) {
+        (void)onto.put({1, 0}, *bar->folded, look());
+
+        return;
+    }
+
+    (void)spelled(onto, {1, 0}, said, marked, look(), look("key"), rendering());
+}
 
 // A drop for `owner`'s menus.
 MenuBar::Drop::Drop(MenuBar& owner) : Window({}, Modal::yes), bar(owner) {
@@ -502,7 +513,7 @@ void MenuBar::open(std::size_t which) {
     root_ = which;
     drops_.push_back(drop);
 
-    for (Title* one : all) one->lit(one == &title);
+    for (Title* one : all) one->lit(one == &title || (folding_ && one == all.front()));
 
     (void)layers->open(drop);
 }
@@ -524,10 +535,29 @@ Size MenuBar::measure(Limits room) const {
     return Size{wide, 1};
 }
 
-// The titles from the left, each as wide as it wants while there is room.
+// The titles from the left, each as wide as it wants while there is room. When they do not all fit
+// and the bar has a folded text (`folded`), the first title shows that text alone and the others
+// take no room, every menu opening under it; the arrows still go from menu to menu.
 void MenuBar::arrange(Area inside) {
     int x = inside.at.x;
     const int end = inside.at.x + inside.size.wide;
+    int wanted = 0;
+
+    for (Node& one : children()) wanted += one.measured(Limits{{0, 0}, inside.size}).wide;
+
+    folding_ = !folded->empty() && wanted > inside.size.wide;
+
+    if (folding_) {
+        const int wide = std::min(text::width(*folded, rendering()) + 2, inside.size.wide);
+        bool first = true;
+
+        for (Node& one : children()) {
+            one.placed(Area{{x, inside.at.y}, {first ? wide : 0, first ? std::min(inside.size.high, 1) : 0}});
+            first = false;
+        }
+
+        return;
+    }
 
     for (Node& one : children()) {
         const int wide = std::min(one.measured(Limits{{0, 0}, inside.size}).wide, end - x);

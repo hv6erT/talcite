@@ -31,6 +31,7 @@ using tal::MouseButton;
 using tal::Node;
 using tal::Press;
 using tal::Resized;
+using tal::Share;
 using tal::Size;
 using tal::Split;
 using tal::Spot;
@@ -440,4 +441,61 @@ TRIAL("Split: parts of strangers and parts that are not positive") {
 
     SAME(split.part(one), 1.0);
     SAME(Split{Axis::horizontal}.borders(), std::size_t{0});
+}
+
+// Where the room is short of `least` for each child, those that yield give up their place, the
+// highest first and among equal ones the last, each left empty at the corner, the others sharing
+// the room; no border shows or moves then. With room again, or once they no longer yield, they
+// come back where they were.
+TRIAL("Split: children that yield give up their place when the room is short") {
+    Scene scene{{.screen = {31, 5}}};
+    Document document{scene.time()};
+    Split& split = document.children().add<Split>(Axis::horizontal, 1);
+    Node& one = split.children().add<Node>();
+    Node& two = split.children().add<Node>();
+    Node& three = split.children().add<Node>();
+    std::size_t resized = 0;
+    const Hook heard = split.on<Resized>([&resized](Resized&) { ++resized; });
+
+    split.least = 9;
+    one.share(Share{0, 0, 1});
+    three.share(Share{0, 0, 1});
+    scene.show(document);
+    scene.wait(0ms);
+
+    SAME(lengths(split), (std::vector<int>{10, 10, 9}));
+
+    split.least = 11;
+    scene.wait(0ms);
+
+    SAME(lengths(split), (std::vector<int>{15, 15, 0}));
+    OUGHT(three.area() == (Area{{0, 0}, {0, 0}}));
+    OUGHT(scene.row(0).find("│") == std::string::npos);
+
+    split.least = 16;
+    scene.wait(0ms);
+
+    SAME(lengths(split), (std::vector<int>{0, 31, 0}));
+    OUGHT(two.area() == (Area{{0, 0}, {31, 5}}));
+    OUGHT(scene.row(0).find("│") == std::string::npos);
+
+    split.moved(0, 3);
+    document.mouse(Press::down, MouseButton::left, Spot{10, 2});
+    document.mouse(Press::move, MouseButton::left, Spot{14, 2});
+    document.mouse(Press::up, MouseButton::left, Spot{14, 2});
+    scene.wait(0ms);
+
+    SAME(resized, std::size_t{0});
+
+    one.share(Share{0, 0, 2});
+    two.share(Share{0, 0, 1});
+    three.share(Share{});
+    scene.wait(0ms);
+
+    SAME(lengths(split), (std::vector<int>{0, 0, 31}));
+
+    split.least = 4;
+    scene.wait(0ms);
+
+    SAME(lengths(split), (std::vector<int>{10, 10, 9}));
 }

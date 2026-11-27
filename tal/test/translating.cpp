@@ -355,8 +355,8 @@ TRIAL("texts: auto is the system's language among the files, or English") {
     SAME(texts.code(), found.empty() ? std::string{"en-US"} : found);
 }
 
-// A disk given to the dictionary is read instead of the default one, which keeps its own files; with
-// none given, the default one is read again.
+// A disk given to the dictionary is read instead of the default one, which keeps its own files;
+// with none given, the default one is read again.
 TRIAL("texts: a port given is read instead of the default one") {
     Desk desk;
     Texts texts = made();

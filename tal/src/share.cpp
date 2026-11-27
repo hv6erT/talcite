@@ -1,6 +1,7 @@
 #include "tal/share.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdlib>
 #include <initializer_list>
 #include <utility>
@@ -237,7 +238,8 @@ Kind by_gio(std::string_view said) {
     return Kind::other;
 }
 
-// The kind of trouble of the Windows or network error `code`.
+// The kind of trouble of the Windows or network error `code`; the person giving up in the system's
+// window (1223) is refused.
 Kind by_windows(std::uint32_t code) {
     switch (code) {
         case 5:
@@ -264,6 +266,7 @@ Kind by_windows(std::uint32_t code) {
         case 50:
         case 1200:
         case 1204: return Kind::unsupported;
+        case 1223: return Kind::refused;
         default: return Kind::other;
     }
 }
@@ -469,6 +472,93 @@ Path connected_at(const Share& one, std::string& user, std::string& password, bo
     return reached_at(one);
 }
 
+// Connects to `one` through the system's own window, which asks for a login when the server wants
+// one the system does not hold, and always when `again` asks so, a connection there was closed
+// first; tal never sees the login. The window is the child of the one in front, the terminal's.
+Path asked_at(const Share& one, bool again) {
+    std::wstring remote = rooted(one);
+    NETRESOURCEW resource{};
+
+    resource.dwType = RESOURCETYPE_DISK;
+    resource.lpRemoteName = remote.data();
+
+    if (again) (void)WNetCancelConnection2W(remote.c_str(), 0, TRUE);
+
+    const DWORD how = CONNECT_TEMPORARY | CONNECT_INTERACTIVE | (again ? CONNECT_PROMPT : 0);
+    const DWORD code = WNetAddConnection3W(GetForegroundWindow(), &resource, nullptr, nullptr, how);
+
+    if (code != NO_ERROR) throw failed(sharing::by_windows(code), spoken(code), one);
+
+    return reached_at(one);
+}
+
+// The remote names of the disks of the system's `scope` of connections (those there are, or those
+// it remembers), each with the letter it is on or nothing.
+std::vector<std::pair<std::wstring, std::wstring>> enumerated(DWORD scope) {
+    std::vector<std::pair<std::wstring, std::wstring>> made;
+    HANDLE handle = nullptr;
+
+    if (WNetOpenEnumW(scope, RESOURCETYPE_DISK, 0, nullptr, &handle) != NO_ERROR) return made;
+
+    std::vector<std::byte> buffer(16 * 1024);
+
+    for (;;) {
+        DWORD count = static_cast<DWORD>(-1);
+        DWORD size = static_cast<DWORD>(buffer.size());
+        const DWORD code = WNetEnumResourceW(handle, &count, buffer.data(), &size);
+
+        if (code == ERROR_MORE_DATA) {
+            buffer.resize(std::max<std::size_t>(size, buffer.size() * 2));
+
+            continue;
+        }
+
+        if (code != NO_ERROR) break;
+
+        const auto* each = reinterpret_cast<const NETRESOURCEW*>(buffer.data());
+
+        for (DWORD at = 0; at < count; ++at)
+            if (each[at].lpRemoteName != nullptr) made.emplace_back(each[at].lpRemoteName, each[at].lpLocalName != nullptr ? each[at].lpLocalName : L"");
+    }
+
+    (void)WNetCloseEnum(handle);
+
+    return made;
+}
+
+// The shares the system is connected to, then those it remembers and is not, each once.
+std::vector<Connection> connections_at() {
+    std::vector<Connection> made;
+    const auto add = [&made](const std::wstring& remote, const std::wstring& local, bool connected) {
+        std::optional<Share> share = addressed(text::narrow(remote));
+
+        if (!share || share->name.empty()) return;
+
+        share->rest.clear();
+
+        std::optional<Path> drive;
+
+        if (!local.empty()) drive = Path{text::narrow(local) + "/"};
+
+        for (Connection& one : made)
+            if (lowered(one.share.server) == lowered(share->server) && lowered(one.share.name) == lowered(share->name)) {
+                one.connected = one.connected || connected;
+
+                if (!one.drive) one.drive = drive;
+
+                return;
+            }
+
+        made.push_back(Connection{std::move(*share), connected, std::move(drive)});
+    };
+
+    for (const auto& [remote, local] : enumerated(RESOURCE_CONNECTED)) add(remote, local, true);
+
+    for (const auto& [remote, local] : enumerated(RESOURCE_REMEMBERED)) add(remote, local, false);
+
+    return made;
+}
+
 // The names of the ordinary disk shares of the server of `one`, sorted, from NetShareEnum.
 std::vector<std::string> offered_at(const Share& one) {
     std::wstring server = L"\\\\" + text::wide(one.server);
@@ -637,6 +727,35 @@ Task<Path> connected_at(Share one, std::string user, std::string password) {
     co_return co_await settled(std::move(one), std::move(said));
 }
 
+// `one` mounted by `gio mount` with the login the system holds; there is no window of the system
+// here to ask for another, so `again` is refused as unsupported.
+Task<Path> asked_at(Share one, bool again) {
+    if (again) throw failed(Kind::unsupported, "The system has no window here to ask for a login; mount the share in the file manager or with gio mount.", one);
+
+    co_return co_await reached_at(std::move(one));
+}
+
+// The shares mounted in GVfs, all connected; GVfs remembers none that are not.
+Task<std::vector<Connection>> connections_at() {
+    std::vector<Connection> made;
+    const std::optional<Path> under = gvfs();
+
+    if (!under) co_return made;
+
+    std::vector<Entry> found;
+
+    try {
+        found = co_await fs::list(*under);
+    } catch (const Trouble&) {
+        co_return made;
+    }
+
+    for (const Entry& each : found)
+        if (std::optional<Share> one = sharing::gvfs_named(each.where.name())) made.push_back(Connection{std::move(*one), true});
+
+    co_return made;
+}
+
 // The names of the visible shares of the server of `one`, sorted, from `gio list`; browsing a
 // server takes a mount in GVfs too.
 Task<std::vector<std::string>> offered_at(Share one) {
@@ -747,6 +866,30 @@ Task<Path> connect(Share one, std::string user, std::string password, bool remem
     });
 #else
     co_return co_await connected_at(std::move(one), std::move(user), std::move(password));
+#endif
+}
+
+// The path of `one` after connecting through the system, which asks for a login in its own window
+// when it needs one, or always when `again` asks so (on Windows; elsewhere the login it holds, and
+// `again` unsupported); tal and its program never see the login. Throws `Trouble` (other) without
+// a server or a share.
+Task<Path> connect(Share one, bool again) {
+    if (one.server.empty() || one.name.empty()) throw Trouble{Kind::other, "A share needs a server and a name."};
+
+#ifdef _WIN32
+    co_return co_await platform::offloaded([one = std::move(one), again] { return asked_at(one, again); });
+#else
+    co_return co_await asked_at(std::move(one), again);
+#endif
+}
+
+// The shares of the network the system is connected to, then those it remembers and is not (on
+// Windows; elsewhere those mounted in GVfs), each once, with the letter it is on.
+Task<std::vector<Connection>> connections() {
+#ifdef _WIN32
+    co_return co_await platform::offloaded([] { return connections_at(); });
+#else
+    co_return co_await connections_at();
 #endif
 }
 

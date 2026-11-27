@@ -28,6 +28,7 @@ enum class Effect { none, paint, layout };
 struct Share {
     int weight = 0;
     int least = 0;
+    int yields = 0;
 
     friend bool operator==(const Share&, const Share&) = default;
 };
