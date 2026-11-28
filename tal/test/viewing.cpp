@@ -5,6 +5,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "tal/document.hpp"
@@ -448,6 +449,63 @@ TRIAL("List: the mouse makes current, picks and scrolls") {
     few.scene.click({3, 4});
 
     SAME(*few.list->current, std::size_t{0});
+}
+
+// A reorderable list: a row pressed and moved shows where it would land, the rows between moving
+// over, in the state `drag`; the release tells `Reordered` and makes it current, the model left to
+// the program. A press and release on one row, a list not reorderable and a move past the rows (to
+// the last) behave as they would; Alt+↑ and Alt+↓ tell a row up or down, not past the ends.
+TRIAL("List: a reorderable row carried by the mouse or by Alt and an arrow") {
+    Shown shown{4};
+    List& list = *shown.list;
+    std::vector<std::pair<std::size_t, std::size_t>> told;
+    const tal::Hook heard = list.on<tal::Reordered>([&told](tal::Reordered& what) { told.emplace_back(what.from, what.to); });
+
+    shown.document.mouse(tal::Press::down, tal::MouseButton::left, Spot{1, 0});
+    shown.document.mouse(tal::Press::move, tal::MouseButton::left, Spot{1, 2});
+    shown.document.mouse(tal::Press::up, tal::MouseButton::left, Spot{1, 2});
+    shown.scene.wait(0ms);
+
+    OUGHT(told.empty());
+
+    list.reorderable = true;
+    shown.document.mouse(tal::Press::down, tal::MouseButton::left, Spot{1, 0});
+    shown.document.mouse(tal::Press::move, tal::MouseButton::left, Spot{1, 2});
+    shown.scene.wait(0ms);
+
+    SAME(shown.scene.row(0).substr(0, 2), std::string{"r1"});
+    SAME(shown.scene.row(1).substr(0, 2), std::string{"r2"});
+    SAME(shown.scene.row(2).substr(0, 2), std::string{"r0"});
+    SAME(shown.scene.row(3).substr(0, 2), std::string{"r3"});
+
+    shown.document.mouse(tal::Press::up, tal::MouseButton::left, Spot{1, 2});
+    shown.scene.wait(0ms);
+
+    OUGHT(told == (std::vector<std::pair<std::size_t, std::size_t>>{{0, 2}}));
+    SAME(*list.current, std::size_t{2});
+    SAME(shown.scene.row(0).substr(0, 2), std::string{"r0"});
+
+    shown.document.mouse(tal::Press::down, tal::MouseButton::left, Spot{1, 1});
+    shown.document.mouse(tal::Press::up, tal::MouseButton::left, Spot{1, 1});
+    shown.document.mouse(tal::Press::down, tal::MouseButton::left, Spot{1, 1});
+    shown.document.mouse(tal::Press::move, tal::MouseButton::left, Spot{1, 9});
+    shown.document.mouse(tal::Press::up, tal::MouseButton::left, Spot{1, 9});
+    shown.scene.wait(0ms);
+
+    OUGHT(told == (std::vector<std::pair<std::size_t, std::size_t>>{{0, 2}, {1, 3}}));
+
+    list.current = 0;
+    shown.scene.press(*tal::Key::from_string("Alt+Up"));
+    shown.scene.press(*tal::Key::from_string("Alt+Down"));
+
+    OUGHT(told == (std::vector<std::pair<std::size_t, std::size_t>>{{0, 2}, {1, 3}, {0, 1}}));
+    SAME(*list.current, std::size_t{1});
+
+    list.current = 3;
+    shown.scene.press(*tal::Key::from_string("Alt+Down"));
+    shown.scene.press(*tal::Key::from_string("Alt+Up"));
+
+    OUGHT(told == (std::vector<std::pair<std::size_t, std::size_t>>{{0, 2}, {1, 3}, {0, 1}, {3, 2}}));
 }
 
 // An entry's part fills its cell in that part's look at the row's states, past its text too, its

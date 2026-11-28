@@ -35,7 +35,11 @@ std::size_t stepped(std::size_t at, long long by) {
 // `Picked`; these are default actions, so the program may take the key first. A click makes a row
 // current (the press gave the list the focus), and a click on a mark with an address tells
 // `Followed` too, which the document opens when nobody takes it; a double click tells `Picked`, and
-// the wheel moves the view only.
+// the wheel moves the view only. A list made `reorderable` lets a row be carried to another place:
+// pressed and moved with the left button, the rows show as they would stand (the row carried in
+// the state `drag`) and the release tells `Reordered` with where it was and where it goes, which
+// becomes current; Alt+↑ and Alt+↓ tell it a row up or down. The list moves nothing itself: the
+// program changes the model.
 List::List(std::shared_ptr<Model> model) : model_(std::move(model)) {
     if (model_ == nullptr) throw std::invalid_argument{"tal::List: no model"};
 
@@ -46,6 +50,24 @@ List::List(std::shared_ptr<Model> model) : model_(std::move(model)) {
 
     hooks_.add(on<Changed>([this](Changed& what) {
         if (what.of(current)) lit();
+    }));
+
+    hooks_.add(otherwise<KeyEvent>([this](KeyEvent& what) {
+        const std::size_t many = extent();
+
+        if (many == 0 || !*reorderable || what.key.mods() != Mods{.alt = true}) return;
+
+        const std::size_t here = shown();
+        const bool up = what.key.code() == Code::up;
+
+        if ((!up && what.key.code() != Code::down) || (up && here == 0) || (!up && here + 1 >= many)) return;
+
+        what.take();
+
+        Reordered one{here, up ? here - 1 : here + 1};
+
+        current = one.to;
+        notified(one);
     }));
 
     hooks_.add(otherwise<KeyEvent>([this](KeyEvent& what) {
@@ -75,6 +97,54 @@ List::List(std::shared_ptr<Model> model) : model_(std::move(model)) {
         }
 
         what.take();
+    }));
+
+    hooks_.add(otherwise<MouseEvent>([this](MouseEvent& what) {
+        if (!*reorderable || what.button != MouseButton::left) return;
+
+        if (what.press == Press::down) {
+            lifting_ = under(what.at);
+            landing_.reset();
+
+            if (lifting_) capture();
+
+            return;
+        }
+
+        if (!lifting_) return;
+
+        if (what.press == Press::move) {
+            const std::size_t row = nearest(what.at);
+
+            what.take();
+
+            if (row == landing_.value_or(*lifting_)) return;
+
+            landing_ = row;
+            state(State::drag, true);
+            repaint();
+
+            return;
+        }
+
+        if (what.press != Press::up) return;
+
+        const std::size_t from = *lifting_;
+        const std::optional<std::size_t> to = landing_;
+
+        lifting_.reset();
+        landing_.reset();
+        state(State::drag, false);
+        repaint();
+
+        if (!to || *to == from || std::max(from, *to) >= extent()) return;
+
+        what.take();
+
+        Reordered one{from, *to};
+
+        current = *to;
+        notified(one);
     }));
 
     hooks_.add(otherwise<MouseEvent>([this](MouseEvent& what) {
@@ -210,12 +280,14 @@ void List::paint(Canvas& onto) const {
     onto.fill(seen, look({}, ground));
 
     for (int y = std::max(seen.at.y, head); y < seen.at.y + seen.size.high; ++y) {
-        const std::size_t row = top_ + static_cast<std::size_t>(y - head);
+        const std::size_t position = top_ + static_cast<std::size_t>(y - head);
 
-        if (row >= many) break;
+        if (position >= many) break;
 
+        const std::size_t row = placed_at(position);
         States states = ground;
 
+        states.set(State::drag, landing_.has_value() && position == *landing_);
         states.set(State::current, row == here);
         states.set(State::focus, lit && row == here);
         states.set(State::mark, marked(row));
@@ -292,6 +364,34 @@ std::optional<std::size_t> List::under(Spot at) const {
     if (row >= extent()) return std::nullopt;
 
     return row;
+}
+
+// The row nearest to the spot `at` of the list: the one there, the first above the rows, the last
+// below them.
+std::size_t List::nearest(Spot at) const {
+    const int y = at.y - inset().top - above();
+    const std::size_t many = extent();
+
+    if (many == 0 || y < 0) return std::min(top_, many == 0 ? 0 : many - 1);
+
+    return std::min(top_ + static_cast<std::size_t>(y), many - 1);
+}
+
+// The row shown at `position`: itself, unless a row is carried, which shows where it would land,
+// the rows between moving over by one.
+std::size_t List::placed_at(std::size_t position) const {
+    if (!lifting_ || !landing_) return position;
+
+    const std::size_t from = *lifting_;
+    const std::size_t to = *landing_;
+
+    if (position == to) return from;
+
+    if (from < to && position >= from && position < to) return position + 1;
+
+    if (to < from && position > to && position <= from) return position - 1;
+
+    return position;
 }
 
 // Follows what the model changed. Rows that come or go above the view move the view, the current

@@ -30,6 +30,13 @@ struct Sorted : Event {
 
 struct Scrolled : Event {};
 
+struct Reordered : Event {
+    Reordered(std::size_t was, std::size_t now) : from(was), to(now) {}
+
+    std::size_t from;
+    std::size_t to;
+};
+
 class Scrollable : public Node {
 public:
     [[nodiscard]] virtual std::size_t extent() const = 0;
@@ -46,6 +53,7 @@ public:
     explicit List(std::shared_ptr<Model> model);
 
     Property<std::size_t> current{*this, Effect::none, 0};
+    Property<bool> reorderable{*this, Effect::none, false};
 
     void mark(std::size_t row, bool on);
 
@@ -89,6 +97,10 @@ protected:
 private:
     [[nodiscard]] std::optional<std::size_t> under(Spot at) const;
 
+    [[nodiscard]] std::size_t nearest(Spot at) const;
+
+    [[nodiscard]] std::size_t placed_at(std::size_t position) const;
+
     void changed(const Changes& what);
 
     void lit();
@@ -102,6 +114,8 @@ private:
     std::size_t top_ = 0;
     std::size_t window_ = 0;
     std::size_t lit_ = 0;
+    std::optional<std::size_t> lifting_;
+    std::optional<std::size_t> landing_;
     Hook told_;
     Hooks hooks_;
 };
